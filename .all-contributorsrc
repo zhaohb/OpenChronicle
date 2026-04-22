@@ -1,0 +1,91 @@
+{
+  "projectName": "OpenChronicle",
+  "projectOwner": "Einsia",
+  "repoType": "github",
+  "repoHost": "https://github.com",
+  "files": [
+    "README.md"
+  ],
+  "badge": false,
+  "imageSize": 100,
+  "commit": false,
+  "commitConvention": "angular",
+  "contributors": [
+    {
+      "login": "KMing-L",
+      "name": "KK",
+      "avatar_url": "https://avatars.githubusercontent.com/u/78015987?v=4",
+      "profile": "https://github.com/KMing-L",
+      "contributions": [
+        "code",
+        "maintenance"
+      ]
+    },
+    {
+      "login": "abmfy",
+      "name": "Bowen Wang",
+      "avatar_url": "https://avatars.githubusercontent.com/u/20623941?v=4",
+      "profile": "https://github.com/abmfy",
+      "contributions": [
+        "code",
+        "maintenance"
+      ]
+    },
+    {
+      "login": "calvin1376",
+      "name": "CrazyCalvin",
+      "avatar_url": "https://avatars.githubusercontent.com/u/190755633?v=4",
+      "profile": "https://github.com/calvin1376",
+      "contributions": [
+        "code"
+      ]
+    },
+    {
+      "login": "Azure-stars",
+      "name": "Firefly",
+      "avatar_url": "https://avatars.githubusercontent.com/u/101097177?v=4",
+      "profile": "https://github.com/Azure-stars",
+      "contributions": [
+        "code"
+      ]
+    },
+    {
+      "login": "Xiao-ao-jiang-hu",
+      "name": "校奥浆糊",
+      "avatar_url": "https://avatars.githubusercontent.com/u/57095350?v=4",
+      "profile": "https://github.com/Xiao-ao-jiang-hu",
+      "contributions": [
+        "code"
+      ]
+    },
+    {
+      "login": "Ashitemaru",
+      "name": "Houde Qian",
+      "avatar_url": "https://avatars.githubusercontent.com/u/58683876?v=4",
+      "profile": "https://ashitemaru.github.io/",
+      "contributions": [
+        "code"
+      ]
+    },
+    {
+      "login": "GiddensF97",
+      "name": "GiddensF97",
+      "avatar_url": "https://avatars.githubusercontent.com/u/253278919?v=4",
+      "profile": "https://github.com/GiddensF97",
+      "contributions": [
+        "design"
+      ]
+    },
+    {
+      "login": "SiyiZhu1",
+      "name": "SiyiZhu1",
+      "avatar_url": "https://avatars.githubusercontent.com/u/132850441?v=4",
+      "profile": "https://github.com/SiyiZhu1",
+      "contributions": [
+        "design"
+      ]
+    }
+  ],
+  "contributorsPerLine": 7,
+  "linkToUsage": false
+}

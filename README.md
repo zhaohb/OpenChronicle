@@ -234,3 +234,33 @@ uv run ruff check
 ## License
 
 MIT.
+## Contributors ✨
+
+Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
+
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+<table>
+  <tbody>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/KMing-L"><img src="https://avatars.githubusercontent.com/u/78015987?v=4?s=100" width="100px;" alt="KK"/><br /><sub><b>KK</b></sub></a><br /><a href="https://github.com/Einsia/OpenChronicle/commits?author=KMing-L" title="Code">💻</a> <a href="#maintenance-KMing-L" title="Maintenance">🚧</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/abmfy"><img src="https://avatars.githubusercontent.com/u/20623941?v=4?s=100" width="100px;" alt="Bowen Wang"/><br /><sub><b>Bowen Wang</b></sub></a><br /><a href="https://github.com/Einsia/OpenChronicle/commits?author=abmfy" title="Code">💻</a> <a href="#maintenance-abmfy" title="Maintenance">🚧</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/calvin1376"><img src="https://avatars.githubusercontent.com/u/190755633?v=4?s=100" width="100px;" alt="CrazyCalvin"/><br /><sub><b>CrazyCalvin</b></sub></a><br /><a href="https://github.com/Einsia/OpenChronicle/commits?author=calvin1376" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Azure-stars"><img src="https://avatars.githubusercontent.com/u/101097177?v=4?s=100" width="100px;" alt="Firefly"/><br /><sub><b>Firefly</b></sub></a><br /><a href="https://github.com/Einsia/OpenChronicle/commits?author=Azure-stars" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Xiao-ao-jiang-hu"><img src="https://avatars.githubusercontent.com/u/57095350?v=4?s=100" width="100px;" alt="校奥浆糊"/><br /><sub><b>校奥浆糊</b></sub></a><br /><a href="https://github.com/Einsia/OpenChronicle/commits?author=Xiao-ao-jiang-hu" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://ashitemaru.github.io/"><img src="https://avatars.githubusercontent.com/u/58683876?v=4?s=100" width="100px;" alt="Houde Qian"/><br /><sub><b>Houde Qian</b></sub></a><br /><a href="https://github.com/Einsia/OpenChronicle/commits?author=Ashitemaru" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/GiddensF97"><img src="https://avatars.githubusercontent.com/u/253278919?v=4?s=100" width="100px;" alt="GiddensF97"/><br /><sub><b>GiddensF97</b></sub></a><br /><a href="#design-GiddensF97" title="Design">🎨</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/SiyiZhu1"><img src="https://avatars.githubusercontent.com/u/132850441?v=4?s=100" width="100px;" alt="SiyiZhu1"/><br /><sub><b>SiyiZhu1</b></sub></a><br /><a href="#design-SiyiZhu1" title="Design">🎨</a></td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- markdownlint-restore -->
+<!-- prettier-ignore-end -->
+
+<!-- ALL-CONTRIBUTORS-LIST:END -->
+
+This project follows the [all-contributors](https://github.com/all-contributors/all-contributors) specification. Contributions of any kind welcome!
