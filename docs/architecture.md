@@ -2,29 +2,105 @@
 
 OpenChronicle is a single daemon that ingests capture events, compresses them through a deterministic funnel, and classifies the result into durable Markdown memory. There is only one ingestion path — no modes.
 
+```mermaid
+flowchart LR
+    W[mac-ax-watcher<br/>Swift binary]
+
+    subgraph capture [Capture Layer]
+        direction TB
+        S0["<b>S0</b> event_dispatcher<br/>dedup · debounce · min-gap"]
+        S1["<b>S1</b> s1_parser<br/>focused_element · visible_text · url"]
+        BUF[(capture-buffer/*.json)]
+        S0 --> S1 --> BUF
+    end
+
+    subgraph compress [Compression Layer]
+        direction TB
+        TL["Timeline aggregator · LLM<br/>1-min normalized blocks<br/>verbatim-preserving"]
+        BLOCKS[(timeline_blocks)]
+        SM["Session manager<br/>3-rule cutter<br/>active → ended"]
+        S2["<b>S2</b> session_reducer · LLM<br/>async thread"]
+        TL --> BLOCKS
+        BLOCKS -- read window --> S2
+        SM -. trigger: flush 5m / on_session_end .-> S2
+    end
+
+    subgraph memory [Memory Layer]
+        direction TB
+        ED[(event-YYYY-MM-DD.md)]
+        CLF["Classifier · LLM<br/>tool-call loop · 30 m tick + terminal"]
+        MF[(user- · project- · tool- ·<br/>topic- · person- · org-*.md)]
+        CMP["Compact · LLM<br/>on-demand"]
+        ED --> CLF --> MF
+        MF -. read / rewrite .-> CMP
+        CMP -. supersede .-> MF
+    end
+
+    subgraph query [Query Layer]
+        direction TB
+        FTS[(SQLite FTS5<br/>entries_fts · captures_fts)]
+        MCP["MCP server<br/>127.0.0.1:8742/mcp"]
+        AG[Tool-capable agents<br/>Claude Code · Desktop · Cursor · Codex · …]
+        FTS --> MCP --> AG
+    end
+
+    W --> S0
+    BUF -. pre_capture_hook<br/>(post-write · skipped on content-dedup) .-> SM
+    BUF --> TL
+    S2 --> ED
+    BLOCKS -. grounding .-> CLF
+    MF --> FTS
+    ED --> FTS
+    BUF -. indexed .-> FTS
 ```
-mac-ax-watcher events
-        ↓
-[S0]  capture/event_dispatcher     dedup / debounce / min-gap
-        ↓
-[S1]  capture/s1_parser            enrich each capture JSON with
-        ↓                          focused_element + visible_text + url
-        ↓
-   capture-buffer/*.json
-        ↓
-[Timeline]  timeline/aggregator    short-window normalized blocks (default 1-min)
-        ↓
-   timeline_blocks (SQLite)
-        ↓
-[Session]  session/manager         3-rule cutter
-        ↓  on_session_end(sid, start, end)
-        ↓
-[S2]  writer/session_reducer       async thread → one entry into
-        ↓                          event-YYYY-MM-DD.md
-        ↓
-[Classifier]  writer/classifier    extracts durable facts into
-                                   user-/project-/tool-/topic-/
-                                   person-/org-*.md
+
+## Runtime sequence
+
+A typical 5-minute flush window, showing how one AX event propagates through to durable memory:
+
+```mermaid
+sequenceDiagram
+    participant W as mac-ax-watcher
+    participant S0 as S0 dispatcher
+    participant S1 as S1 parser
+    participant BUF as capture-buffer
+    participant SM as Session mgr
+    participant TL as Timeline tick
+    participant R as S2 reducer
+    participant CLF as Classifier
+    participant DB as SQLite + memory/
+    participant MCP as MCP / agent
+
+    W->>S0: AX event
+    S0->>S0: debounce / dedup / min-gap
+    S0->>S1: schedule capture runner (threaded)
+    S1->>BUF: write enriched {iso}.json
+    Note right of BUF: content-fingerprint dedup<br/>drops consecutive duplicates
+    BUF->>SM: pre_capture_hook → on_event<br/>(post-write · skipped on content-dedup)
+
+    Note over TL,BUF: timeline tick · every 60 s
+    TL->>BUF: scan closed 1-min windows
+    TL->>DB: LLM → insert timeline_blocks
+
+    Note over SM,R: flush tick · every 5 min
+    SM->>R: reduce(flush_end → now)
+    R->>DB: read blocks · LLM · append [flush] entry
+    R->>SM: advance flush_end
+
+    Note over CLF,DB: classifier tick · every 30 min
+    CLF->>DB: read event-daily (tagged sid:)<br/>+ timeline_blocks in window (grounding)
+    CLF->>DB: LLM tool-call loop → update memory files
+    CLF->>SM: advance classified_end
+
+    Note over SM,CLF: on_session_end<br/>(idle / soft-cut / timeout / shutdown / 23:55)
+    SM->>R: terminal reduce (full trailing range)
+    R->>DB: final entry
+    R-->>CLF: on_done callback
+    CLF->>DB: classify trailing window
+
+    Note over MCP,DB: any time
+    MCP->>DB: FTS search / list / read
+    DB-->>MCP: results
 ```
 
 ## Tasks in the daemon

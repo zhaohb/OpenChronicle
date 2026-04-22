@@ -24,16 +24,22 @@ A session older than `session.max_session_hours` (default **2**) is force-cut re
 
 ## Session state machine
 
-```
-active  ──flush tick (every flush_minutes)───────────▶  active (flush_end advanced, partial entry appended)
-  │     ──classifier tick (every interval_minutes)──▶  active (classified_end advanced, durable facts maybe written)
-  │
-  └──on_session_end──▶  ended  ──reducer OK──▶  reduced  ──▶  terminal classifier (trailing window)
-                          │
-                          └───reducer fail──▶  failed
-                                                 │
-                                                 └──retry schedule (5/15/30/60/120 min)
-                                                    or daily safety-net → reduced
+```mermaid
+stateDiagram-v2
+    [*] --> active: on_session_start
+
+    active --> active: flush tick (every flush_minutes)<br/>flush_end advanced, [flush] entry appended
+    active --> active: classifier tick (every interval_minutes)<br/>classified_end advanced, durable facts maybe written
+
+    active --> ended: on_session_end<br/>(idle-gap / soft-cut / timeout /<br/>daemon-shutdown / 23:55 safety-net)
+
+    ended --> reduced: reducer OK<br/>+ terminal classifier (trailing window)
+    ended --> failed: reducer fail
+
+    failed --> reduced: retry schedule (5/15/30/60/120 min)<br/>or daily safety-net
+    failed --> failed: retry still fails<br/>(retry_count++ up to MAX_RETRIES=5)
+
+    reduced --> [*]
 ```
 
 Rows live in the `sessions` table (see [writer.md](writer.md#sessions-table)). `flush_end` tracks the last reduced window boundary so the next flush (or the terminal reduce) only covers *new* timeline blocks; `classified_end` plays the same role for the classifier.

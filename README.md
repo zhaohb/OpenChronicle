@@ -68,25 +68,25 @@ We think this is the right tradeoff for an early memory system:
 
 ## How it works
 
-```text
-mac-ax-watcher events
-      ↓
-[S0] dispatcher        dedup · debounce · min-gap
-      ↓
-[S1] parser            focused_element · visible_text · url
-      ↓
-capture-buffer/*.json
-      ↓
-[Timeline] normalizer  short-window blocks, authored text kept verbatim
-      ↓
-[Session] manager      idle 5m · app-switch 3m · max 2h
-      ↓
-[S2] reducer           time-ranged entries → event-YYYY-MM-DD.md
-      ↓
-[Classifier]           durable facts → user- / project- / tool- / topic- /
-                                         person- / org-*.md
-      ↓
-SQLite FTS5 · Markdown on disk · served to agents
+```mermaid
+flowchart LR
+    W[mac-ax-watcher<br/>events]
+    S0["<b>S0</b> dispatcher<br/>dedup · debounce<br/>min-gap"]
+    S1["<b>S1</b> parser<br/>focused_element<br/>visible_text · url"]
+    BUF[(capture-buffer<br/>/*.json)]
+    TL["Timeline<br/>normalizer<br/>1-min · verbatim"]
+    TB[(timeline_blocks)]
+    SM["Session mgr<br/>idle 5m · app-switch 3m<br/>max 2h"]
+    S2["<b>S2</b> reducer"]
+    ED[(event-<br/>YYYY-MM-DD.md)]
+    CLF["Classifier<br/>→ user- / project- / tool- /<br/>topic- / person- / org-*.md"]
+    STORE[("SQLite FTS5<br/>+ Markdown")]
+
+    W --> S0 --> S1 --> BUF --> TL --> TB --> S2 --> ED --> CLF --> STORE
+    ED --> STORE
+    BUF -. pre_capture_hook<br/>(post-write · skipped on content-dedup) .-> SM
+    SM -. flush 5m / on_end .-> S2
+    TB -. grounding .-> CLF
 ```
 
 The core idea is simple:
