@@ -203,7 +203,7 @@ install_package() {
 
 compile_bundled_binaries() {
   log "compiling bundled AX helper binaries"
-  "${VENV_DIR}/bin/python" - <<'PY' || exit 1
+  "${VENV_DIR}/bin/python" - <<'PY' || die "failed to compile bundled AX binaries"
 from openchronicle.capture.ax_capture import _resolve_helper_path
 from openchronicle.capture.watcher import _resolve_watcher_path
 
@@ -226,19 +226,31 @@ choose_install_bin_dir() {
     return 0
   fi
 
+  local home_local="${HOME}/.local/bin"
+  case ":${PATH}:" in
+    *":${home_local}:"*)
+      mkdir -p "${home_local}"
+      if [[ -w "${home_local}" ]]; then
+        printf '%s' "${home_local}"
+        return 0
+      fi
+      ;;
+  esac
+
   local path_dir
+  local -a path_parts
   IFS=':' read -r -a path_parts <<< "${PATH}"
   for path_dir in "${path_parts[@]}"; do
     [[ -n "${path_dir}" ]] || continue
+    [[ "${path_dir}" == "${home_local}" ]] && continue
     [[ -d "${path_dir}" && -w "${path_dir}" ]] || continue
     printf '%s' "${path_dir}"
     return 0
   done
 
-  path_dir="${HOME}/.local/bin"
-  mkdir -p "${path_dir}"
-  [[ -w "${path_dir}" ]] || die "could not find or create a writable bin directory"
-  printf '%s' "${path_dir}"
+  mkdir -p "${home_local}"
+  [[ -w "${home_local}" ]] || die "could not find or create a writable bin directory"
+  printf '%s' "${home_local}"
 }
 
 install_shim() {
@@ -255,7 +267,7 @@ EOF
 
 verify_install() {
   "${INSTALL_BIN_DIR}/openchronicle" status >/dev/null \
-    || die "installation verification failed (`openchronicle status` did not succeed)"
+    || die "installation verification failed ('openchronicle status' did not succeed)"
 }
 
 prompt_yes_no() {
