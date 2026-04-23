@@ -12,6 +12,7 @@ INJECT_MODE="prompt"  # prompt | all | none
 UV_BIN=""
 OPENCHRONICLE_BIN=""
 INSTALL_BIN_DIR=""
+PYTHON_TARGET=""
 
 log() {
   printf '[openchronicle-install] %s\n' "$*"
@@ -175,13 +176,13 @@ prepare_python_target() {
   local system_python=""
   if system_python="$(find_compatible_system_python)"; then
     log "using system Python at ${system_python}"
-    printf '%s' "${system_python}"
+    PYTHON_TARGET="${system_python}"
     return 0
   fi
 
   log "system Python < 3.11; installing managed Python ${PYTHON_SPEC} via uv"
   "${UV_BIN}" python install "${PYTHON_SPEC}" || die "failed to install Python ${PYTHON_SPEC} via uv"
-  printf '%s' "${PYTHON_SPEC}"
+  PYTHON_TARGET="${PYTHON_SPEC}"
 }
 
 install_package() {
@@ -362,9 +363,9 @@ main() {
   ensure_xcode_clt
   ensure_uv
 
-  local python_target
-  python_target="$(prepare_python_target)"
-  install_package "${python_target}"
+  prepare_python_target
+  [[ -n "${PYTHON_TARGET}" ]] || die "failed to determine a Python target"
+  install_package "${PYTHON_TARGET}"
   compile_bundled_binaries
   install_shim
   verify_install
