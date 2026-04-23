@@ -14,6 +14,25 @@
 
 ---
 
+<p align="center">
+  <a href="https://star-history.com/#Einsia/OpenChronicle&Date">
+    <picture>
+      <source
+        media="(prefers-color-scheme: dark)"
+        srcset="https://api.star-history.com/svg?repos=Einsia/OpenChronicle&type=Date&theme=dark"
+      />
+      <source
+        media="(prefers-color-scheme: light)"
+        srcset="https://api.star-history.com/svg?repos=Einsia/OpenChronicle&type=Date"
+      />
+      <img
+        alt="Star History Chart"
+        src="https://api.star-history.com/svg?repos=Einsia/OpenChronicle&type=Date"
+      />
+    </picture>
+  </a>
+</p>
+
 > **Status:** v0.1.0 · macOS only · early alpha
 
 OpenChronicle gives AI agents a local, inspectable memory built from real screen and app context.
