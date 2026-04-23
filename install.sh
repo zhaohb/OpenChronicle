@@ -227,29 +227,8 @@ choose_install_bin_dir() {
   fi
 
   local home_local="${HOME}/.local/bin"
-  case ":${PATH}:" in
-    *":${home_local}:"*)
-      mkdir -p "${home_local}"
-      if [[ -w "${home_local}" ]]; then
-        printf '%s' "${home_local}"
-        return 0
-      fi
-      ;;
-  esac
-
-  local path_dir
-  local -a path_parts
-  IFS=':' read -r -a path_parts <<< "${PATH}"
-  for path_dir in "${path_parts[@]}"; do
-    [[ -n "${path_dir}" ]] || continue
-    [[ "${path_dir}" == "${home_local}" ]] && continue
-    [[ -d "${path_dir}" && -w "${path_dir}" ]] || continue
-    printf '%s' "${path_dir}"
-    return 0
-  done
-
   mkdir -p "${home_local}"
-  [[ -w "${home_local}" ]] || die "could not find or create a writable bin directory"
+  [[ -w "${home_local}" ]] || die "could not create a writable bin directory at ${home_local}"
   printf '%s' "${home_local}"
 }
 
