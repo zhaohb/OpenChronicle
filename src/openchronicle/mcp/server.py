@@ -153,232 +153,163 @@ def _get_schema() -> dict[str, Any]:
 
 
 _SERVER_INSTRUCTIONS = """\
-# OpenChronicle — User's local personal memory
+# OpenChronicle — the user's local personal memory
 
-OpenChronicle is a **private, local-first store of durable facts about the user and
-their machine**. It's the user's own long-term memory, opted into and maintained on
-their device. It holds things like:
+## What this is
 
-- Identity & background: name, role, languages, location, skill stack
-- Preferences, habits, and working style
-- Schedule: meetings, interviews, deadlines, trips, appointments
-- Ongoing projects, their state, and recent progress
-- People and organizations the user interacts with
-- Recent screen-activity summaries (what they've been working on, which tools,
-  which files, which errors, which docs)
+OpenChronicle is the user's private, local-first memory layer. The user installed it so agents can recover context from their real computer use instead of asking the user to repeat themselves or guessing blindly.
 
-The user installed this MCP **precisely so agents can look things up instead of
-asking or guessing**. Treat it as a cheap, always-available extension of your
-context window. A missed lookup is a worse failure mode than an unnecessary one.
+It stores durable facts about the user and their machine, including:
 
----
+- identity, role, preferences, habits, and working style
+- schedule, ongoing projects, people, and organizations
+- recent screen-activity summaries, including apps, files, errors, and documents viewed
 
-## ALWAYS-call rules (hard rules — do not skip)
+It exposes two read-only layers:
 
-These override your default cost-benefit heuristic. Each rule fires independently;
-a single match means you MUST call at least one listed tool BEFORE composing your
-reply. The tools are local, respond in milliseconds, and cost nothing.
+- **Compressed memory** — curated Markdown files containing distilled facts, decisions, preferences, summaries, and durable context
+- **Raw captures (S1 buffer)** — literal recent on-screen content, including visible text, focused elements, URLs, and optional screenshots
 
-1. **Demonstrative / pronoun with no antecedent in this conversation.** If the
-   user says *"that / this / it / the thing / the bug / the error / the doc /
-   那个 / 这个 / 这段 / 这个问题"* and that reference was NOT introduced earlier
-   in THIS conversation — ALWAYS call `current_context` first. The user is
-   almost always pointing at something on their screen that you literally
-   cannot see from chat history. This is the single highest-value lookup.
+The compressed layer tells you that something happened and why it matters.
+The raw layer tells you exactly what was on screen.
 
-   ❌ **Failure pattern to avoid:**
-   > User: "what's the bug of that?"
-   > You: "I don't have any code to look at — could you share…?"
+Use compressed memory for durable knowledge.
+Use raw captures for grounding, disambiguation, and exact recent context.
+Often, you should move from one into the other.
 
-   That response is a bug on your side. You DO have a tool that sees their
-   screen. The correct turn is: call `current_context()` silently, then
-   answer from the captured visible_text / focused_element.value. Only if
-   `current_context` comes back empty should you ask for a paste.
+## When to use
 
-2. **First personal-context turn of a conversation.** When the user's very first
-   substantive message references themselves, their work, their people, their
-   schedule, or their screen — ALWAYS call `list_memories` OR `current_context`
-   before answering. This is how you find out what's even available.
+Use OpenChronicle whenever the request depends on context that is likely outside the current chat.
 
-3. **"Right now / just now / currently / 现在 / 刚才" questions.** Any present-
-   tense question about the user's current state — *"what am I doing?" / "what's
-   on my screen?" / "我在看什么？" / "summarize the doc I have open"* — ALWAYS
-   call `current_context` first. Don't guess from chat history.
+This includes:
 
-4. **Temporal references to past activity.** *"yesterday", "last week", "earlier
-   today", "this morning", "上周", "刚才"* — ALWAYS call `recent_activity` or
-   `search` with a time bound before answering.
+- recent on-screen activity
+- ambiguous references such as "this", "that", "it", "the bug", "the file", "the tab", or "the doc"
+- prior project / person / tool context
+- learned preferences, habits, or workflow patterns
+- writing or generation that should reflect the user's ongoing projects, established framing, terminology, tone, or style
+- action selection that should reflect the user's established workflows or destinations
+- cross-session continuity
+- recent work history, decisions, or ongoing tasks
 
-5. **Keyword the user typed or read.** Error messages, proper nouns they haven't
-   introduced, file paths, URLs, code symbols — ALWAYS try `search_captures`
-   (raw screen) in parallel with `search` (compressed) before saying you don't
-   know.
+Canonical triggers:
 
-6. **Before "I don't know" / "I don't have context" / "could you share…".** You
-   are NEVER allowed to plead missing context about the user's work, screen, or
-   history without first calling at least `current_context` OR `list_memories`
-   + one of `search` / `recent_activity`. Asking the user to paste something
-   they already have on screen is a tool-selection failure, not a legitimate
-   clarification. If after calling the tools it's genuinely not there, only
-   then ask.
+- "what's the bug of that?"
+- "introduce my project"
+- "continue what I was doing"
+- "write this the way I usually do"
+- "draft this in the style of my project"
+- "schedule this the way I usually do"
+- "put this in the right calendar"
+- "what did I decide about X?"
 
-7. **Before a clarifying question about personal state.** Before asking *"which
-   project do you mean?" / "when is your meeting?" / "which file?"* — ALWAYS
-   call a tool first. The answer is frequently in memory or on their screen;
-   asking is worse UX than a quiet lookup.
+Examples:
 
-8. **Before generating ANY code, config, or shell command for the user.**
-   *"write me a function", "give me a snippet", "how do I implement X", "show
-   me an example", "refactor this", "translate this to Python"* — ALWAYS call
-   `read_memory("user-preferences.md")` first (it's small and free), and
-   additionally `read_memory("user-profile.md")` if you haven't seen it this
-   session. Users have strong, specific style preferences — modern type
-   syntax vs legacy, `pathlib.Path` vs `os.path`, `uv` vs `pip`, pytest vs
-   unittest, docstring conventions, error-handling style, linter choice —
-   that you CANNOT guess from the prompt. Skipping this check produces
-   generic, textbook-style code that doesn't match how they actually write.
-   Your code output quality depends on this lookup.
+- User refers to "that" after viewing code → query OpenChronicle before asking them to paste anything.
+- User opens a fresh chat and asks about an existing project → retrieve project memory before asking for background.
+- User asks for an action that depends on personal workflow → retrieve preference memory before choosing a tool, destination, or account.
+- User asks for writing, messaging, or framing that should match prior context, terminology, tone, or preferences → retrieve relevant memory before drafting.
 
-   ❌ **Failure pattern to avoid:**
-   > User: "write me a Python function to find the last N ERROR lines in a log."
-   > You (without checking): [generates code with `from typing import List, Optional`, `os.path.exists` checks, verbose docstring]
-   > User (silently): "that's not how I write Python at all."
+If the user appears to assume shared context from recent computer use, query OpenChronicle before asking a clarification question.
 
-   The first Python / TypeScript / etc. code-gen turn of ANY conversation
-   should be preceded by this read. On subsequent turns you can rely on the
-   preferences already loaded into your context.
+When in doubt, look it up.
+A missed lookup is often worse than an unnecessary one.
+These tools are local and cheap; `[]` or `null` is still useful information.
 
-If a rule fires, call the tool. There is no case where "the answer is probably
-not in memory" justifies skipping — the tools return `[]` / `null` cheaply if
-empty, and that's useful information too.
+## When NOT to use
 
----
+Do not use OpenChronicle when:
 
-## When to call (extended criteria)
+- the request is fully specified in-chat
+- the task is self-contained and does not benefit from user-specific context
+- a fresher or authoritative source of truth should be used directly
+- the user explicitly wants no prior context used
 
-Beyond the hard rules above, also call whenever ANY of the following is true:
-
-### 1. The user refers to something without fully specifying it
-
-Any deictic or anaphoric reference to entities not introduced in the current
-conversation is a signal the answer may be in memory. This includes:
-
-- Demonstratives with no clear antecedent: "this", "that", "the thing", "那个",
-  "这个项目", "the doc I was reading"
-- Definite articles presupposing shared knowledge: "the bug", "the meeting",
-  "the refactor", "my editor"
-- Possessives referring to durable user state: "my project", "my team", "my setup",
-  "my usual approach", "我的项目", "我的偏好"
-- Temporal references to prior activity: "yesterday", "last week", "earlier",
-  "before the weekend", "上周", "刚才"
-- Proper nouns the user hasn't defined in this conversation: names of people,
-  projects, companies, tools
-
-### 2. The user is asking about themselves
-
-Any first-person question about facts the user would expect their memory to know.
-Examples of the *shape* (not an exhaustive list):
-
-- Schedule and commitments: "when is…", "what's on my…", "do I have…"
-- Identity and preferences: "do I prefer…", "what do I usually…", "what's my…"
-- Projects and work: "what am I working on", "where did I leave off", "what's the
-  state of…"
-- People and relationships: "who is…", "what did I say about…", "what did X and I
-  discuss"
-
-### 3. Prior context would materially improve your answer
-
-Even when the user doesn't explicitly reference memory, check it whenever knowing
-the user's state would change your response. This is the most common case and the
-most often missed. Examples:
-
-- User asks a technical question → their skill level, preferred stack, and
-  current project context change what a good answer looks like
-- User asks for a recommendation → their past choices, stated preferences, and
-  constraints matter
-- User asks to draft something → their voice, relationships with the recipient,
-  and relevant background matter
-- User asks for planning help → their schedule, commitments, and ongoing work matter
-- User asks an ambiguous question → their recent activity often disambiguates intent
-
-### 4. You're about to say "I don't know" or ask a clarifying question
-
-Before either, check memory. A large fraction of "I don't have that information"
-responses and clarification requests are answerable from the user's own memory.
-
----
-
-## When NOT to call these tools
-
-- Pure general-knowledge questions with no personal angle ("what year was the
-  French Revolution", "how does TCP work")
-- Tasks entirely self-contained in the current conversation (user pasted code and
-  asked to fix a specific bug in it)
-- Trivial chit-chat where personal context adds nothing
-
-When in doubt, call. The tools are local and cheap.
-
----
+OpenChronicle complements live sources of truth; it does not replace them.
+Use it to recover context, not to invent certainty.
 
 ## Tools
 
-There are TWO distinct layers of memory. Compressed memory (Markdown files) is the
-narrative summary; raw captures (the S1 buffer) hold the actual screen content.
-**You almost always need to drop into raw captures eventually** — the compressed
-summary tells you a meeting happened; the raw capture tells you what was said.
+### Compressed memory
 
-### Compressed memory (Markdown files)
+- `list_memories()` — index of all memory files with one-line descriptions. Cheap first hop when you need to know what exists.
+- `read_memory(path, since?, until?, tags?, tail_n?)` — full or filtered contents of one Markdown memory file.
+- `search(query, paths?, since?, until?, top_k?)` — BM25 over compressed memory. Use for project names, decisions, preferences, people, and other already-distilled facts.
+- `recent_activity(since?, limit?, prefix_filter?)` — newest-first feed across memory files. Use for "what has the user been doing?" and recency-based disambiguation.
 
-- `list_memories()` — Index of all memory files with one-line descriptions. Cheap
-  first hop; usually tells you which file(s) to read next.
-- `search(query, paths?, since?, until?)` — BM25 over compressed memory entries.
-  Use when you have keywords *that have already been distilled into memory*
-  (proper nouns, project names, decisions, preferences). For keywords the user
-  typed or read on screen but that may not have made it into memory yet, use
-  `search_captures` instead.
-- `read_memory(path, tail_n?, since?, until?, tags?)` — Full or filtered contents
-  of one Markdown file. Use after `list_memories` / `search` points you at it.
-- `recent_activity(since?, limit?, prefix_filter?)` — Newest-first feed across
-  all memory files. Use for "what have I been doing" style queries or to
-  disambiguate vague references by recency.
+### Raw captures (S1 layer)
 
-### Raw captures (the S1 layer — what was literally on screen)
+- `current_context()` — one-shot snapshot of the current/recent screen context with visible text and timeline blocks. Default for present-tense or ambiguous-reference questions.
+- `search_captures(query, since?, until?, app_name?, limit?)` — BM25 over the raw screen buffer. Use for exact strings the user likely saw or typed: error messages, code symbols, file paths, URLs, doc titles.
+- `read_recent_capture(at?, app_name?, window_title_substring?, ...)` — hydrate one recent capture in full. Use after a `search_captures` hit or when a compressed entry points you to a raw breadcrumb.
 
-- `current_context()` — One-shot snapshot of "right now". Returns the last few
-  captures + their full visible_text + the most recent timeline blocks. PREFER
-  this for any "what am I doing now / 我现在在干嘛 / what's open in front of me"
-  question — it's a single call instead of guessing which other tool to use.
-- `search_captures(query, since?, until?, app_name?)` — BM25 over the RAW screen
-  buffer. Use when the user mentions a keyword they would have typed or seen on
-  screen — error messages, code symbols, file paths, URLs, things from a doc
-  they were reading. Returns BM25-ranked hits with snippet highlighting.
-- `read_recent_capture(at?, app_name?, window_title_substring?)` — Hydrate one
-  capture's full content (visible_text, focused element value, optional
-  screenshot). Use after a `search_captures` hit, or when an event-daily
-  sub_task gives you an `(at, app_name)` pair to drill into.
+### Reference
 
-### Other
+- `get_schema()` — memory file naming and structural spec. Rarely needed during normal query flow.
 
-- `get_schema()` — Organization rules for memory file naming. Rarely needed.
+## Choosing and combining tools
 
-## Typical flows
+- **Compressed vs raw**
+  - Compressed memory is for durable knowledge: preferences, decisions, summaries, project context.
+  - Raw captures are for literal recent context: code, docs, UI state, errors, file contents, page text.
+  - If unsure, query both `search(...)` and `search_captures(...)` in parallel.
 
-- **"What am I doing right now?"** → `current_context()` — one call, done.
-- **Known durable fact** ("what's my role", "what does X do") → `list_memories`
-  → `read_memory`.
-- **Keyword the user mentioned** — first try `search` (compressed memory). If
-  nothing useful, follow up with `search_captures` (raw screen).
-- **Drill down from compressed → raw.** Compressed event-daily entries carry
-  inline breadcrumbs like `[14:30-14:35, Cursor] edited main.py — raw:
-  read_recent_capture(at="14:30", app_name="Cursor")`. Whenever you read an
-  event-daily entry and the user asks for specifics ("what code did I write",
-  "what was in the doc"), call the breadcrumb's `read_recent_capture` directly.
-- **Recency-driven** ("what was I just working on") → `recent_activity` (memory
-  layer) or `current_context()` (screen layer); pick by whether the user wants
-  the *narrative* or the *content*.
+- **For "what am I doing right now?"**
+  - Start with `current_context()`.
 
-A missed lookup is a worse failure mode than an unnecessary one. When the
-question even slightly depends on what the user has been doing or seeing, call.
+- **For a durable fact**
+  - Start with `search(...)` or `list_memories()`, then `read_memory(...)`.
+
+- **For a keyword the user likely just saw or typed**
+  - Use `search_captures(...)`, then `read_recent_capture(...)` on the best hit.
+
+- **For recency-driven requests**
+  - Use `recent_activity(...)` for the narrative view.
+  - Use `current_context()` for the literal current-screen view.
+
+- **For ambiguous references**
+  - Prefer `current_context()` first.
+  - If needed, expand with `recent_activity(...)` or `search_captures(...)`.
+
+- **For writing personalization**
+  - Read relevant project / preference memory before drafting.
+  - Match the user's established terminology, framing, and style when memory supports it.
+
+- **For action personalization**
+  - Read relevant preference memory before taking side-effecting actions.
+  - Use memory to choose the right tool, destination, calendar, account, or workflow.
+
+- **Before a write-side-effect tool**
+  - First check memory for user preferences and prior context.
+  - Then use the authoritative execution tool.
+  - Do not rely on memory alone when live state matters.
+
+- **Follow breadcrumbs**
+  - Compressed entries may point into raw captures via `(at, app_name)` or similar hints.
+  - When the user wants specifics, follow those breadcrumbs exactly with `read_recent_capture(...)`.
+
+## Decision rule
+
+Default to using OpenChronicle when memory could:
+
+- resolve ambiguity
+- restore missing context
+- avoid making the user restate known information
+- personalize writing
+- personalize action selection
+
+Do not default to it when the task is already fully specified or when only live state matters.
+
+## If retrieval is weak
+
+If OpenChronicle returns little, conflicting, or inconclusive information:
+
+- say that explicitly
+- use the partial context if still helpful
+- ask a focused follow-up question only after checking
+- do not overclaim certainty
+
+Raw captures have bounded retention: older on-screen content is dropped from the S1 buffer. If `search_captures` or `read_recent_capture` returns nothing for something the user did a while ago, that only means the raw capture has aged out — the event may still be summarized in compressed memory. Fall back to `search` / `recent_activity` before concluding it didn't happen.
 """
 
 
