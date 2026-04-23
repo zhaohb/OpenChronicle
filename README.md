@@ -133,28 +133,13 @@ The core idea is simple:
 
 ## Install
 
-Requires **macOS 13+**, **Python 3.11+**, and **Xcode Command Line Tools** (xcode-select --install).
+Requires **macOS 13+** and **Xcode Command Line Tools** (`xcode-select --install`).
 
 ```bash
 git clone https://github.com/openchronicle/openchronicle.git
 cd openchronicle
-uv tool install .
-bash resources/build-mac-ax-helper.sh
-bash resources/build-mac-ax-watcher.sh
-openchronicle status
+bash install.sh
 ```
-
-If `openchronicle: command not found`, run:
-
-```bash
-uv tool update-shell
-```
-
-Then open a new terminal.
-
-Grant Accessibility permission the first time you run it:
-
-**System Settings → Privacy & Security → Accessibility → add your terminal**
 
 ---
 
