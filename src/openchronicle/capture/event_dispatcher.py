@@ -68,9 +68,16 @@ class EventDispatcher:
         self._debounce_timer: threading.Timer | None = None
         self._pending_trigger: dict[str, Any] | None = None
 
-        self._last_event_time: dict[str, float] = {}
-        self._last_capture_key: str = ""
+        # Tuple keys avoid the silent collision a delimited-string key has
+        # whenever bundle_id or window_title contains the delimiter (e.g.
+        # a window titled "App: Untitled" colliding with "App" + ": Untitled").
+        self._last_event_time: dict[tuple[str, str, str], float] = {}
+        self._last_capture_key: tuple[str, str] = ("", "")
         self._last_capture_monotonic: float = 0.0
+
+    # Periodically prune entries that can no longer suppress dedup so the
+    # map can't grow forever as the user visits many distinct windows.
+    _PRUNE_EVERY: int = 256
 
     def on_event(self, raw: dict[str, Any]) -> None:
         """Watcher callback. Classifies the event and (maybe) triggers capture."""
@@ -80,13 +87,15 @@ class EventDispatcher:
 
         bundle_id = raw.get("bundle_id", "") or ""
         window_title = raw.get("window_title", "") or ""
-        dedup_key = f"{event_type}:{bundle_id}:{window_title}"
+        dedup_key = (event_type, bundle_id, window_title)
 
         now = time.monotonic()
         last = self._last_event_time.get(dedup_key, 0.0)
         if now - last < self._dedup_interval:
             return
         self._last_event_time[dedup_key] = now
+        if len(self._last_event_time) >= self._PRUNE_EVERY:
+            self._prune_event_times(now)
 
         trigger = {
             "event_type": event_type,
@@ -99,6 +108,12 @@ class EventDispatcher:
             self._maybe_capture(trigger)
         elif event_type in _DEBOUNCED_EVENTS:
             self._schedule_debounce(trigger)
+
+    def _prune_event_times(self, now: float) -> None:
+        cutoff = now - self._dedup_interval
+        self._last_event_time = {
+            k: t for k, t in self._last_event_time.items() if t >= cutoff
+        }
 
     def _schedule_debounce(self, trigger: dict[str, Any]) -> None:
         with self._lock:
@@ -128,33 +143,40 @@ class EventDispatcher:
     def _maybe_capture(self, trigger: dict[str, Any]) -> None:
         """Apply last-frame dedup + rate limit, then invoke the capture fn."""
         event_type = trigger["event_type"]
-        key = f"{trigger['bundle_id']}:{trigger['window_title']}"
+        key = (trigger["bundle_id"], trigger["window_title"])
         now = time.monotonic()
         is_focus_change = event_type in (
             "AXFocusedWindowChanged",
             "AXApplicationActivated",
         )
 
-        if (
-            not is_focus_change
-            and key == self._last_capture_key
-            and (now - self._last_capture_monotonic) < self._same_window_dedup
-        ):
-            logger.debug(
-                "capture skipped (same-window dedup <%.1fs): %s",
-                self._same_window_dedup, trigger["window_title"][:40],
-            )
-            return
+        # Decide-and-commit under the lock: this method is called from both the
+        # watcher reader thread (immediate events) and the debounce Timer
+        # thread, so reading then writing _last_capture_* without serialization
+        # races and lets two near-simultaneous events bypass dedup/rate-limit.
+        # Keep _capture_fn outside the lock so a slow callback can't stall the
+        # other thread.
+        with self._lock:
+            if (
+                not is_focus_change
+                and key == self._last_capture_key
+                and (now - self._last_capture_monotonic) < self._same_window_dedup
+            ):
+                logger.debug(
+                    "capture skipped (same-window dedup <%.1fs): %s",
+                    self._same_window_dedup, trigger["window_title"][:40],
+                )
+                return
 
-        gap = now - self._last_capture_monotonic
-        if gap < self._min_capture_gap and not is_focus_change:
-            logger.debug(
-                "capture skipped (rate limit %.1fs): %s", gap, event_type
-            )
-            return
+            gap = now - self._last_capture_monotonic
+            if gap < self._min_capture_gap and not is_focus_change:
+                logger.debug(
+                    "capture skipped (rate limit %.1fs): %s", gap, event_type
+                )
+                return
 
-        self._last_capture_key = key
-        self._last_capture_monotonic = now
+            self._last_capture_key = key
+            self._last_capture_monotonic = now
 
         try:
             self._capture_fn(trigger)
