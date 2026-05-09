@@ -17,9 +17,9 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from . import __version__, paths
 from . import config as config_mod
 from . import logger as logger_mod
-from . import paths
 from .store import entries as entries_mod
 from .store import fts, index_md
 
@@ -68,6 +68,71 @@ def _read_pid() -> int | None:
     except (FileNotFoundError, ValueError):
         return None
     return pid if _is_pid_alive(pid) else None
+
+
+def _daemon_uptime() -> str:
+    """Return a human-readable uptime string for the running daemon.
+
+    Reads the PID file's mtime as a proxy for daemon start time (the
+    daemon overwrites it on each launch). Returns ``"stopped"`` when
+    the daemon is not running.
+    """
+    pid = _read_pid()
+    if not pid:
+        return "stopped"
+    try:
+        mtime = paths.pid_file().stat().st_mtime
+        now = datetime.now().astimezone()
+        delta = now - datetime.fromtimestamp(mtime).astimezone()
+        h, r = divmod(int(delta.total_seconds()), 3600)
+        m = r // 60
+        if h >= 24:
+            return f"{h // 24}d {h % 24}h"
+        if h:
+            return f"{h}h {m}m"
+        return f"{m}m"
+    except OSError:
+        return "unknown"
+
+
+def _last_capture_info() -> tuple[str | None, str | None]:
+    """Return ``(timestamp, app_name)`` of the most recent capture buffer file.
+
+    Returns ``(None, None)`` when the buffer directory is empty or missing.
+    """
+    buf = paths.capture_buffer_dir()
+    if not buf.exists():
+        return None, None
+    json_files = sorted(p for p in buf.iterdir() if p.suffix == ".json")
+    if not json_files:
+        return None, None
+    try:
+        data = json.loads(json_files[-1].read_bytes())
+        ts = data.get("timestamp")
+        meta = data.get("window_meta") or {}
+        app = meta.get("app_name")
+        return ts, app
+    except (OSError, ValueError):
+        return json_files[-1].stem, None
+
+
+def _health_status(pid: int | None, last_ts: str | None) -> tuple[str, str]:
+    """Return ``(label, style)`` for daemon health.
+
+    ``style`` is a Rich-style string suitable for ``console.print``.
+    """
+    if not pid:
+        return "stopped", "red"
+    if not last_ts:
+        return "running (no captures yet)", "yellow"
+    try:
+        last = datetime.fromisoformat(last_ts)
+        age = (datetime.now(last.tzinfo) - last).total_seconds()
+    except (ValueError, TypeError):
+        return "running", "green"
+    if age < 300:  # 5 minutes
+        return "healthy", "green"
+    return "stale (no captures in >5m)", "yellow"
 
 
 # ─── commands ─────────────────────────────────────────────────────────────
@@ -201,10 +266,33 @@ def status() -> None:
     pid = _read_pid()
     paused = paths.paused_flag().exists()
 
+    uptime = _daemon_uptime()
+    last_ts, last_app = _last_capture_info()
+    health_label, health_style = _health_status(pid, last_ts)
+
     table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_row("Version", __version__)
     table.add_row("Root", str(paths.root()))
     table.add_row("Daemon", f"[green]running pid {pid}[/green]" if pid else "[red]stopped[/red]")
+    table.add_row("Uptime", uptime)
+    table.add_row("Health", f"[{health_style}]{health_label}[/{health_style}]")
     table.add_row("Capture", "[yellow]paused[/yellow]" if paused else "active")
+
+    if last_ts:
+        try:
+            last_dt = datetime.fromisoformat(last_ts)
+            age = (datetime.now(last_dt.tzinfo) - last_dt).total_seconds()
+            if age < 60:
+                ago = "just now"
+            elif age < 3600:
+                ago = f"{int(age // 60)}m ago"
+            else:
+                ago = f"{int(age // 3600)}h ago"
+            table.add_row("Last Capture", f"{ago} ({last_app})" if last_app else ago)
+        except (ValueError, TypeError):
+            table.add_row("Last Capture", last_ts)
+    else:
+        table.add_row("Last Capture", "(none)")
 
     buf = paths.capture_buffer_dir()
     if buf.exists():
@@ -242,11 +330,74 @@ def status() -> None:
         tlb_last = tlb_row[1] if tlb_row and tlb_row[1] else "(none)"
         table.add_row("Timeline", f"{tlb_count} blocks, last end: {tlb_last}")
 
-    for stage in ("timeline", "reducer", "classifier", "compact"):
+    stages = ("timeline", "reducer", "classifier", "compact")
+    ping_results = _ping_stages(cfg, stages)
+    for stage in stages:
         m = cfg.model_for(stage)
-        table.add_row(f"Model ({stage})", m.model)
+        ping = _format_ping(ping_results.get(stage))
+        table.add_row(f"Model ({stage})", f"{m.model}   {ping}")
 
     console.print(table)
+
+
+def _ping_stages(cfg: config_mod.Config, stages: tuple[str, ...]) -> dict:
+    """Probe each stage's configured model, deduping identical configs.
+
+    Returns a dict keyed by stage name -> PingResult. Pings run in parallel
+    so a single hung provider can't stretch the wait past the per-call
+    timeout.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from dataclasses import replace
+
+    from .writer.llm import PingResult, ping_stage
+
+    # Dedup by (model, base_url, resolved api key) — common case is one model
+    # for all four stages, which should hit the network once.
+    dedup: dict[tuple[str, str, str], list[str]] = {}
+    for stage in stages:
+        m = cfg.model_for(stage)
+        key = (m.model, m.base_url, config_mod.resolve_api_key(m) or "")
+        dedup.setdefault(key, []).append(stage)
+
+    results: dict = {}
+    if not dedup:
+        return results
+    with ThreadPoolExecutor(max_workers=min(4, len(dedup))) as pool:
+        future_to_stages = {
+            pool.submit(ping_stage, cfg, members[0]): members
+            for members in dedup.values()
+        }
+        for future, members in future_to_stages.items():
+            try:
+                res = future.result(timeout=12.0)
+            except Exception as exc:  # noqa: BLE001
+                err_label = type(exc).__name__
+                for stage in members:
+                    m = cfg.model_for(stage)
+                    results[stage] = PingResult(
+                        stage=stage, model=m.model, ok=False,
+                        latency_ms=None, error=err_label,
+                    )
+                continue
+            for stage in members:
+                # Reuse the same PingResult across stages that share a config,
+                # but tag each with its own stage name so callers can map back.
+                results[stage] = replace(res, stage=stage)
+    return results
+
+
+def _format_ping(res) -> str:
+    """Render a PingResult as a short Rich-styled cell."""
+    if res is None:
+        return "[dim]?[/dim]"
+    if res.mocked:
+        return "[dim]✓ mocked[/dim]"
+    if res.ok:
+        latency = f"{res.latency_ms} ms" if res.latency_ms is not None else "ok"
+        return f"[green]✓[/green] {latency}"
+    err = res.error or "failed"
+    return f"[red]✗[/red] {err}"
 
 
 @app.command()
