@@ -492,8 +492,8 @@ def _build_event(
 
     The ``hwnd`` field is Windows-specific: it carries the foreground
     HWND observed at the moment the hook fired. Downstream code uses it
-    to anchor the win-uia-helper subprocess (which is session-isolated
-    and can't see the desktop on its own). It has no mac counterpart —
+    to anchor in-process UI capture (pywinauto) to the correct HWND when
+    multiple windows exist. It has no mac counterpart —
     on mac the helper uses NSWorkspace.frontmostApplication, which is
     always available — so consumers of the cross-platform schema simply
     ignore the field outside of Windows.

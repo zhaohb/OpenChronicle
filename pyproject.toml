@@ -28,6 +28,7 @@ dependencies = [
     "mcp>=1.0",
     "httpx[socks]>=0.27",
     "tomli>=2.0; python_version < '3.11'",
+    "pywinauto>=0.6.8; sys_platform == 'win32'",
 ]
 
 [project.scripts]
@@ -48,7 +49,6 @@ packages = ["src/openchronicle"]
 "resources/build-mac-ax-helper.sh" = "openchronicle/_bundled/build-mac-ax-helper.sh"
 "resources/mac-ax-watcher.swift" = "openchronicle/_bundled/mac-ax-watcher.swift"
 "resources/build-mac-ax-watcher.sh" = "openchronicle/_bundled/build-mac-ax-watcher.sh"
-"resources/win-uia-helper.ps1" = "openchronicle/_bundled/win-uia-helper.ps1"
 
 [dependency-groups]
 dev = [

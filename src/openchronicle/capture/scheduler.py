@@ -36,8 +36,9 @@ def _safe_filename(ts: str) -> str:
 def _public_trigger(trigger: dict[str, Any] | None) -> dict[str, Any]:
     """Return the schema-stable trigger fields suitable for capture.json.
 
-    Internal-only hints (windows HWND, PID — used to anchor the helper
-    subprocess) live on the trigger dict for plumbing convenience but
+    Internal-only hints (Windows HWND, PID — used to anchor in-process
+    UIA capture to the window that fired the event) live on the trigger dict
+    for plumbing convenience but
     must not leak into the persisted JSON, otherwise the on-disk schema
     diverges between mac and Windows.
     """
@@ -60,15 +61,15 @@ def _resolve_window_meta(
     The primary source — ``window_meta.active_window()`` — calls
     ``GetForegroundWindow`` on Windows. From a session-isolated daemon
     worker thread (a known ConPTY edge case) that returns 0, leaving the
-    capture's ``window_meta`` empty even when the AX helper *did*
+    capture's ``window_meta`` empty even when the AX / UIA tree *did*
     successfully introspect the same window via the anchored HWND/PID.
     Downstream stages then surface the missing app name as ``Unknown``.
 
     Two ranked fallbacks fill the gap, mirroring the data the macOS
     osascript path would have produced:
 
-    1. **AX tree's frontmost app** — the helper was invoked with the
-       watcher's anchor hwnd/pid, so its ``apps[].name`` /
+    1. **AX tree's frontmost app** — capture used the watcher's anchor
+       hwnd/pid, so its ``apps[].name`` /
        ``apps[].bundle_id`` / ``windows[].title`` describe exactly the
        window the user was on at capture time.
     2. **Watcher trigger** — what `WinEventHook` saw when the event
@@ -151,12 +152,12 @@ def _build_capture(
     }
 
     if provider.available:
-        # On Windows the helper subprocess can't see the desktop, so we
-        # must hand it the foreground HWND/PID. The watcher includes
-        # ``hwnd`` in every event it emits — that's the exact window the
-        # event came from, eliminating any race vs polling. Heartbeat
-        # captures (no trigger) fall back to GetForegroundWindow inside
-        # the provider. Mac ignores these hints.
+        # On Windows, ``window_meta.active_window()`` can return empty from
+        # a background worker (GetForegroundWindow edge cases); the tree
+        # still needs the correct HWND/PID. Pass the watcher's ``hwnd`` /
+        # ``pid`` on every event-driven capture. Heartbeats (no trigger)
+        # fall back to GetForegroundWindow inside the provider. macOS
+        # ignores these hints.
         anchor_hwnd = int((trigger or {}).get("hwnd") or 0)
         anchor_pid = int((trigger or {}).get("pid") or 0)
         result = provider.capture_frontmost(
@@ -272,7 +273,7 @@ def capture_once(
     ``trigger`` (optional) carries the watcher event metadata that caused this
     capture. When absent the capture is treated as a heartbeat / manual tick.
 
-    This helper always writes — content-dedup lives in ``_CaptureRunner`` so the
+    This entrypoint always writes — content-dedup lives in ``_CaptureRunner`` so the
     CLI ``capture-once`` smoke test still produces a fresh file on demand.
     """
     out = _build_capture(cfg, provider, trigger)
@@ -393,7 +394,8 @@ async def run_forever(
 ) -> None:
     """Run the capture pipeline until cancelled.
 
-    If ``cfg.event_driven`` is true, starts the watcher subprocess and routes
+    If ``cfg.event_driven`` is true, starts the platform watcher (macOS:
+    ``mac-ax-watcher`` subprocess; Windows: in-process hooks) and routes
     events through the dispatcher. A heartbeat timer also runs so long idle
     periods (no window changes, no typing) still get periodic snapshots.
 

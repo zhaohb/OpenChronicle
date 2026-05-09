@@ -10,10 +10,10 @@ Capture is the only layer that touches the outside world. It produces one JSON f
 
 Both funnel into `capture_once` in `capture/scheduler.py`, which runs:
 
-1. `ax_capture.capture_frontmost(focused_window_only=True)` — one-shot invocation of `mac-ax-helper` for the current window, pruned to `ax_depth` layers.
+1. `ax_capture.capture_frontmost(focused_window_only=True)` — one-shot tree for the current window (macOS: `mac-ax-helper`; Windows: pywinauto UIA), pruned to `ax_depth` layers.
 2. `s1_parser.enrich()` — extracts `focused_element`, `visible_text`, and `url` from the AX tree (see [S1 fields](#s1-fields) below).
 3. `screenshot.grab()` — unless `include_screenshot = false`.
-4. `window_meta.active_window()` — app name, title, bundle_id via `NSRunningApplication`.
+4. `window_meta.active_window()` — app name, title, bundle_id (macOS: `NSRunningApplication`; Windows: foreground Win32 metadata).
 5. Write `{iso8601_safe}.json` to the buffer.
 
 The filename is ISO-8601 with `:` → `-` and `+` → `p` / `-` → `m` for the TZ offset. Example: `2026-04-21T17-07-32p08-00.json`.
@@ -91,7 +91,11 @@ A 10×+ ratio means there's content past depth 30 you'd miss.
 
 `trigger` is `{"event_type": "heartbeat"}` for timer captures and `{"event_type": "manual"}` for `capture-once`. Screenshot is omitted entirely when `include_screenshot = false`.
 
-Secure fields (password inputs) are replaced with `"[REDACTED]"` at the helper level — the Python side never sees them.
+Secure fields (password inputs) are replaced with `"[REDACTED]"` during native capture (macOS AX helper / Windows UIA) — the Python enrich step never sees raw secrets.
+
+## Windows capture
+
+On Windows, the one-shot UI Automation tree uses **pywinauto** (UIA backend) in-process. The emitted JSON matches the historical AX-tree shape consumed by `s1_parser` and the timeline. **pywinauto** is a Windows-only dependency in `pyproject.toml`; install it if you run from a source checkout without resolving extras.
 
 ## S1 fields
 

@@ -103,8 +103,8 @@ class EventDispatcher:
             "window_title": window_title,
         }
         # Windows-only HWND/PID hints — used by the capture scheduler to
-        # anchor the win-uia-helper subprocess to the user's foreground
-        # window. Stripped before being written into the capture JSON
+        # anchor pywinauto capture to the user's foreground window.
+        # Stripped before being written into the capture JSON
         # (see scheduler._public_trigger). Mac's watcher doesn't emit
         # these fields, so the trigger gracefully degrades.
         hwnd = raw.get("hwnd")

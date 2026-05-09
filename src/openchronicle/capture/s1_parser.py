@@ -51,7 +51,7 @@ _EDITABLE_ROLES = {"AXTextField", "AXTextArea", "AXComboBox", "AXEdit"}
 _STATIC_ROLES = {"AXStaticText", "AXWebArea", "AXText"}
 
 # Roles that can hold a browser address bar. mac-ax-helper reports the
-# Chromium/Safari address bar as ``AXTextField``; win-uia-helper.ps1 maps
+# Chromium/Safari address bar as ``AXTextField``; Windows UIA maps
 # the UIA ``Edit`` control type to ``AXEdit`` (and some browsers expose
 # the address bar as ``AXComboBox``). Keep all three here so ``_extract_url``
 # works on both platforms without per-OS branching.
