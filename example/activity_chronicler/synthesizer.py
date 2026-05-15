@@ -1,0 +1,396 @@
+"""LLM passes that turn deterministic stats + sub_tasks into a recap.
+
+Two passes — same shape as ``meeting_task_digest`` and ``handover_assistant``:
+
+1. ``theme_cluster.md``  → groups sub_tasks into themes (no time math).
+2. ``weekly_recap.md``   → narrates the window using the themes + the
+   pre-computed time-distribution table + (optional) previous window's recap.
+
+The LLM never re-derives durations: every minute / percent comes from
+:mod:`stats` or from a verbatim ``Observed regularity:`` line emitted by
+OpenChronicle's session reducer.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from pathlib import Path
+from typing import Any, Iterable
+
+from shared import LLMClient
+from shared.memory_loader import Entry, MemoryFile
+
+from .stats import ActivityStats, SubTask, format_table
+
+logger = logging.getLogger(__name__)
+
+PROMPTS_DIR = Path(__file__).parent / "prompts"
+
+
+@dataclass(slots=True)
+class Theme:
+    name: str
+    description: str
+    apps: list[str]
+    approx_minutes: int
+    evidence_ranges: list[str]
+
+
+@dataclass(slots=True)
+class NotableOneOff:
+    range: str
+    note: str
+
+
+@dataclass(slots=True)
+class ChangeItem:
+    kind: str
+    note: str
+
+
+@dataclass(slots=True)
+class Recap:
+    """The full long-term-memory artifact for one window."""
+
+    since: date
+    until: date
+    window_label: str
+    generated_at: datetime
+    stats: ActivityStats
+    headline: str = ""
+    summary: str = ""
+    time_breakdown_note: str = ""
+    themes: list[Theme] = field(default_factory=list)
+    regularities: list[str] = field(default_factory=list)
+    change_vs_previous: list[ChangeItem] = field(default_factory=list)
+    open_threads: list[str] = field(default_factory=list)
+    coverage_note: str = ""
+    coverage_minutes: int = 0
+    notable_one_offs: list[NotableOneOff] = field(default_factory=list)
+
+
+def _load_prompt(name: str) -> str:
+    return (PROMPTS_DIR / name).read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Prompt-input formatters
+# ---------------------------------------------------------------------------
+
+def _format_subtasks(sub_tasks: Iterable[SubTask], max_lines: int = 600) -> str:
+    """Compact, deterministic listing of every sub_task in the window.
+
+    Cap to ``max_lines`` to stay inside small models' context. We trim from
+    the *middle* (keep the most recent + the oldest), which preserves the
+    bookends a recap needs.
+    """
+    lines = [
+        f"[{s.day.isoformat()} {s.start.strftime('%H:%M')}-{s.end.strftime('%H:%M')}, {s.app}] {s.text}"
+        for s in sub_tasks
+    ]
+    if len(lines) <= max_lines:
+        return "\n".join(lines) if lines else "(no sub_tasks parsed)"
+    head = lines[: max_lines // 2]
+    tail = lines[-max_lines // 2 :]
+    omitted = len(lines) - len(head) - len(tail)
+    return "\n".join(head + [f"... [{omitted} sub_tasks omitted to fit context] ..."] + tail)
+
+
+def _extract_observed_regularities(entries: Iterable[Entry]) -> list[str]:
+    """Pull every `Observed regularity:` sentence the reducer left for us.
+
+    These are the gold input for the recap's ``regularities`` field — they
+    were grounded by the upstream pipeline against actual timeline blocks.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        body = entry.body or ""
+        for line in body.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            idx = stripped.find("Observed regularity:")
+            if idx < 0:
+                continue
+            sentence = stripped[idx:].rstrip()
+            if sentence in seen:
+                continue
+            seen.add(sentence)
+            out.append(sentence)
+    return out
+
+
+def _format_durable_files(files: Iterable[MemoryFile]) -> str:
+    rows: list[str] = []
+    for f in files:
+        desc = (f.description or "").replace("\n", " ").strip()
+        rows.append(f"- {f.path}: {desc[:240]}")
+    return "\n".join(rows) if rows else "(none)"
+
+
+# ---------------------------------------------------------------------------
+# Coercion helpers — keep the LLM honest about JSON shape
+# ---------------------------------------------------------------------------
+
+def _coerce_themes(raw: Any) -> list[Theme]:
+    out: list[Theme] = []
+    if not isinstance(raw, list):
+        return out
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "")).strip()
+        if not name:
+            continue
+        try:
+            mins = int(item.get("approx_minutes", 0) or 0)
+        except (TypeError, ValueError):
+            mins = 0
+        evidence = [str(x).strip() for x in (item.get("evidence_ranges") or []) if x]
+        if not evidence:
+            # A theme with no cited range fails the prompt's own anti-hallucination
+            # rule — drop it rather than render a phantom strand of work.
+            continue
+        out.append(
+            Theme(
+                name=name,
+                description=str(item.get("description", "")).strip(),
+                apps=[str(x).strip() for x in (item.get("apps") or []) if x],
+                approx_minutes=max(0, mins),
+                evidence_ranges=evidence,
+            )
+        )
+    return out
+
+
+def _coerce_one_offs(raw: Any) -> list[NotableOneOff]:
+    out: list[NotableOneOff] = []
+    if not isinstance(raw, list):
+        return out
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        rng = str(item.get("range", "")).strip()
+        note = str(item.get("note", "")).strip()
+        if not (rng and note):
+            continue
+        out.append(NotableOneOff(range=rng, note=note))
+    return out
+
+
+def _coerce_changes(raw: Any) -> list[ChangeItem]:
+    out: list[ChangeItem] = []
+    if not isinstance(raw, list):
+        return out
+    allowed = {"new_theme", "dropped_theme", "app_shift", "tempo_shift"}
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind", "")).strip()
+        note = str(item.get("note", "")).strip()
+        if not note:
+            continue
+        if kind not in allowed:
+            kind = "tempo_shift"
+        out.append(ChangeItem(kind=kind, note=note))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# LLM passes
+# ---------------------------------------------------------------------------
+
+def _cluster_themes(
+    llm: LLMClient,
+    stats: ActivityStats,
+    sub_tasks: list[SubTask],
+    durable: list[MemoryFile],
+) -> tuple[list[Theme], list[NotableOneOff], int]:
+    """Pass 1 — cluster sub_tasks into themes."""
+    if not sub_tasks:
+        return [], [], 0
+
+    sub_tasks_text = _format_subtasks(sub_tasks)
+    stats_text = format_table(stats)
+    durable_text = _format_durable_files(durable)
+    system = _load_prompt("theme_cluster.md").format(
+        since=stats.since.isoformat(),
+        until=stats.until.isoformat(),
+        sub_task_count=stats.sub_task_count,
+        total_minutes=stats.total_minutes,
+        sub_tasks_text=sub_tasks_text,
+        stats_text=stats_text,
+        durable_text=durable_text,
+    )
+    user_payload = "Return the JSON object per the schema. Output only JSON, no markdown fences."
+    response = llm.chat(system=system, user=user_payload, json_mode=True)
+    if not isinstance(response, dict):
+        logger.warning("Theme-cluster pass returned non-dict; treating as empty.")
+        return [], [], 0
+    themes = _coerce_themes(response.get("themes"))
+    one_offs = _coerce_one_offs(response.get("notable_one_offs"))
+    try:
+        coverage = int(response.get("coverage_minutes", 0) or 0)
+    except (TypeError, ValueError):
+        coverage = 0
+    if coverage <= 0:
+        # Recompute from themes if the model omitted the field.
+        coverage = sum(t.approx_minutes for t in themes)
+    return themes, one_offs, coverage
+
+
+def _format_themes_for_recap(themes: Iterable[Theme]) -> str:
+    rows: list[str] = []
+    for t in themes:
+        rows.append(f"### {t.name} ({t.approx_minutes} min)")
+        if t.apps:
+            rows.append(f"apps: {', '.join(t.apps)}")
+        if t.description:
+            rows.append(t.description)
+        if t.evidence_ranges:
+            rows.append("evidence:")
+            for r in t.evidence_ranges:
+                rows.append(f"  - {r}")
+        rows.append("")
+    return "\n".join(rows) if rows else "(no themes)"
+
+
+def _format_one_offs(one_offs: Iterable[NotableOneOff]) -> str:
+    rows = [f"- [{o.range}] {o.note}" for o in one_offs]
+    return "\n".join(rows) if rows else "(none)"
+
+
+def _format_previous_recap(prev: Recap | None) -> str:
+    if prev is None:
+        return "(no previous-window recap provided)"
+    rows = [
+        f"window: {prev.since.isoformat()} → {prev.until.isoformat()}",
+        f"headline: {prev.headline}",
+        "themes:",
+    ]
+    for t in prev.themes:
+        rows.append(f"  - {t.name}: {t.approx_minutes} min ({', '.join(t.apps)})")
+    rows.append(f"top_apps_table:")
+    for app, mins in prev.stats.top_apps(8):
+        rows.append(f"  - {app}: {mins} min")
+    return "\n".join(rows)
+
+
+def _synthesize_recap_pass(
+    llm: LLMClient,
+    stats: ActivityStats,
+    themes: list[Theme],
+    one_offs: list[NotableOneOff],
+    regularities: list[str],
+    durable: list[MemoryFile],
+    previous: Recap | None,
+    window_label: str,
+) -> dict[str, Any]:
+    """Pass 2 — narrate the window."""
+    stats_text = format_table(stats)
+    themes_text = _format_themes_for_recap(themes)
+    notable_text = _format_one_offs(one_offs)
+    regularities_text = (
+        "\n".join(f"- {r}" for r in regularities) if regularities else "(none)"
+    )
+    durable_text = _format_durable_files(durable)
+    previous_text = _format_previous_recap(previous)
+    system = _load_prompt("weekly_recap.md").format(
+        since=stats.since.isoformat(),
+        until=stats.until.isoformat(),
+        window_label=window_label,
+        stats_text=stats_text,
+        themes_text=themes_text,
+        notable_text=notable_text,
+        regularities_text=regularities_text,
+        durable_text=durable_text,
+        previous_text=previous_text,
+    )
+    user_payload = "Return the JSON object per the schema. Output only JSON, no markdown fences."
+    response = llm.chat(system=system, user=user_payload, json_mode=True)
+    if not isinstance(response, dict):
+        logger.warning("Recap pass returned non-dict; rendering minimal fallback.")
+        return {}
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def synthesize_recap(
+    llm: LLMClient,
+    stats: ActivityStats,
+    sub_tasks: list[SubTask],
+    event_entries: list[Entry],
+    durable: list[MemoryFile],
+    previous: Recap | None,
+    window_label: str,
+) -> Recap:
+    """Run both LLM passes and assemble a :class:`Recap`."""
+    recap = Recap(
+        since=stats.since,
+        until=stats.until,
+        window_label=window_label,
+        generated_at=datetime.now(),
+        stats=stats,
+    )
+
+    if stats.total_minutes <= 0 or not sub_tasks:
+        recap.headline = "本窗口内未捕获到可统计的桌面活动。"
+        recap.summary = (
+            "OpenChronicle 在该时间范围内没有写入 event-daily 中的 sub_task 行 — "
+            "可能是 daemon 未运行、还没积累足够数据，或 reducer 阶段未产出。"
+        )
+        recap.coverage_note = "0% 覆盖：该窗口没有可识别的 sub_task。"
+        return recap
+
+    themes, one_offs, coverage = _cluster_themes(llm, stats, sub_tasks, durable)
+    recap.themes = themes
+    recap.notable_one_offs = one_offs
+    recap.coverage_minutes = coverage
+
+    regularities = _extract_observed_regularities(event_entries)
+
+    response = _synthesize_recap_pass(
+        llm,
+        stats,
+        themes,
+        one_offs,
+        regularities,
+        durable,
+        previous,
+        window_label,
+    )
+
+    recap.headline = str(response.get("headline", "")).strip()
+    recap.summary = str(response.get("summary", "")).strip()
+    recap.time_breakdown_note = str(response.get("time_breakdown_note", "")).strip()
+    recap.coverage_note = str(response.get("coverage_note", "")).strip()
+    recap.regularities = [
+        str(x).strip() for x in (response.get("regularities") or []) if str(x).strip()
+    ]
+    recap.change_vs_previous = _coerce_changes(response.get("change_vs_previous"))
+    recap.open_threads = [
+        str(x).strip() for x in (response.get("open_threads") or []) if str(x).strip()
+    ]
+
+    # If the recap pass forgot the regularities, fall back to the upstream
+    # pipeline's own grounded sentences — the prompt explicitly says these
+    # are pre-grounded, so it's safe to surface them as-is.
+    if not recap.regularities and regularities:
+        recap.regularities = regularities[:5]
+
+    return recap
+
+
+__all__ = [
+    "Theme",
+    "NotableOneOff",
+    "ChangeItem",
+    "Recap",
+    "synthesize_recap",
+]
