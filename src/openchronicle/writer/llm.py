@@ -88,8 +88,17 @@ def call_llm(
         kwargs["response_format"] = {"type": "json_object"}
     if model_cfg.max_tokens:
         kwargs["max_tokens"] = model_cfg.max_tokens
+    # Ollama: disable thinking/reasoning prefix so JSON-mode callers get parseable bodies.
+    # LiteLLM maps this to the Ollama `think` request field (see litellm ollama chat transform).
+    if model_cfg.model.startswith("ollama/"):
+        kwargs["think"] = False
 
-    logger.debug("llm call stage=%s model=%s", stage, model_cfg.model)
+    logger.debug(
+        "llm call stage=%s model=%s think=%s",
+        stage,
+        model_cfg.model,
+        kwargs.get("think"),
+    )
     return litellm.completion(**kwargs)
 
 

@@ -138,7 +138,16 @@ _窗口：ISO week 2026-W19（2026-05-04 → 2026-05-10）  生成时间：2026-
 - **主题覆盖**：15 小时 50 分钟（约 87.0% 落入显式主题）
 - **时间分布要点**：Cursor accounted for 312 of 540 tracked minutes (~58%)…
 
-## 三、主题分布
+## 二、活动简序（时间线）
+
+### 2026-05-04
+- **09:12–10:30** · `Cursor` · 约 **78** 分钟 — win_watcher dispatch …
+- **14:02–15:48** · `Cursor` · 约 **106** 分钟 — …
+
+## 三、本窗口叙事
+（LLM 叙事段落…）
+
+## 四、主题分布
 ### OpenChronicle Windows watcher
 _约 5 小时 12 分钟  ·  Cursor／PowerShell_
 
@@ -151,7 +160,7 @@ Implemented and iterated on `win_watcher.py` … typed the commit message
 …
 </details>
 
-## 五、应用使用 Top 列表
+## 六、应用使用 Top 列表
 | 应用 | 时长 (min) | 占比 |
 |---|---|---|
 | Cursor | 312 | 57.8% |
@@ -159,19 +168,27 @@ Implemented and iterated on `win_watcher.py` … typed the commit message
 | Outlook | 68 | 12.6% |
 …
 
-## 七、长期模式（本窗口观察）
+## 七、时间分布速览
+（按小时桶 / 星期等的简要表或要点…）
+
+## 八、长期模式（本窗口观察）
 - Observed regularity: commit messages typed in Cursor's git panel during
   this window all use lowercase imperative `feat: …` / `fix: …` prefixes (3 commits).
 
-## 八、与上一窗口对比
+## 九、与上一窗口对比
 | 类别 | 说明 |
 |---|---|
 | 新增主题 | Customer A renewal is new this week; no Outlook activity on that thread last week. |
 | 应用占比变化 | Microsoft Edge time dropped from 220 min last week to 90 min this week … |
 
-## 九、未完结线索
-- An Outlook draft "renewal pricing aligned, awaiting legal sign-off" was typed Friday
-  but no sent-mail sub_task followed in the window.
+## 十、未完结线索（含最后已知状态）
+- **Customer A renewal**
+  - 最后观测：2026-05-09 16:20-16:45, Outlook
+  - 最后状态：草稿已写入；窗口内无已发送 sub_task
+  - 摘录/原文：
+    "renewal pricing aligned, awaiting legal sign-off"
+  - 未闭环原因：周五后无发送/归档类 sub_task
+  - 证据出处：notable_one_off … + theme …
 ```
 
 ---

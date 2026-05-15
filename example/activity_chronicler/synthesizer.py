@@ -44,10 +44,109 @@ class NotableOneOff:
     note: str
 
 
+# Substrings of app names (from one-off ``range``, after last ", ") that indicate
+# mail / calendar / meeting clients for recap ordering and Markdown grouping.
+_MAIL_MEETING_APP_SUBSTRINGS: tuple[str, ...] = (
+    "outlook",
+    "thunderbird",
+    "mail",
+    "teams",
+    "zoom",
+    "webex",
+    "skype",
+    "google meet",
+    "facetime",
+    "calendar",
+    "日历",
+)
+
+# If ``range`` + ``note`` contains these, treat as mail/meeting-related even when
+# the app is a generic browser (e.g. Outlook on the web).
+_MAIL_MEETING_TEXT_MARKERS: tuple[str, ...] = (
+    "meeting",
+    "calendar",
+    "invite",
+    "inbox",
+    "outbox",
+    "composer",
+    "zoom ",
+    " teams",
+    "webex",
+    "outlook",
+    "gmail",
+    "邮件",
+    "会议",
+    "会邀",
+    "日历",
+    "邮箱",
+    "回信",
+    "转发",
+    "邀请",
+    "日程",
+    "例会",
+    "周会",
+    "视频会议",
+)
+
+
+def _app_suffix_from_one_off_range(range_str: str) -> str:
+    s = range_str.strip()
+    if ", " in s:
+        return s.rsplit(", ", 1)[-1].strip().lower()
+    return ""
+
+
+def is_mail_meeting_notable_one_off(o: NotableOneOff) -> bool:
+    """Heuristic: used to order one-offs and group §五 in Markdown output."""
+    app = _app_suffix_from_one_off_range(o.range)
+    if any(frag in app for frag in _MAIL_MEETING_APP_SUBSTRINGS):
+        return True
+    blob = f"{o.range} {o.note}".lower()
+    return any(m in blob for m in _MAIL_MEETING_TEXT_MARKERS)
+
+
+def prioritize_mail_meeting_one_offs(one_offs: list[NotableOneOff]) -> list[NotableOneOff]:
+    """Stable sort: mail/calendar/meeting-related entries first."""
+    if len(one_offs) < 2:
+        return one_offs
+    keyed = [(i, o) for i, o in enumerate(one_offs)]
+    keyed.sort(
+        key=lambda t: (0 if is_mail_meeting_notable_one_off(t[1]) else 1, t[0])
+    )
+    return [o for _, o in keyed]
+
+
 @dataclass(slots=True)
 class ChangeItem:
     kind: str
     note: str
+
+
+@dataclass(slots=True)
+class OpenThread:
+    """One unfinished strand at end of window — structured for recap §九."""
+
+    topic: str = ""
+    last_status: str = ""
+    last_seen: str = ""
+    last_snapshot: str = ""
+    why_unfinished: str = ""
+    grounded_in: str = ""
+
+    def is_legacy_flat_sentence(self) -> bool:
+        """Older weekly_recap output: a single prose line, no structured fields."""
+        snap = self.last_snapshot.strip()
+        if not snap or "\n" in snap:
+            return False
+        return not any(
+            (
+                self.topic.strip(),
+                self.last_status.strip(),
+                self.last_seen.strip(),
+                self.why_unfinished.strip(),
+                self.grounded_in.strip(),
+            )
+        )
 
 
 @dataclass(slots=True)
@@ -65,7 +164,7 @@ class Recap:
     themes: list[Theme] = field(default_factory=list)
     regularities: list[str] = field(default_factory=list)
     change_vs_previous: list[ChangeItem] = field(default_factory=list)
-    open_threads: list[str] = field(default_factory=list)
+    open_threads: list[OpenThread] = field(default_factory=list)
     coverage_note: str = ""
     coverage_minutes: int = 0
     notable_one_offs: list[NotableOneOff] = field(default_factory=list)
@@ -181,6 +280,55 @@ def _coerce_one_offs(raw: Any) -> list[NotableOneOff]:
     return out
 
 
+def _coerce_open_threads(raw: Any) -> list[OpenThread]:
+    """Parse Pass-2 ``open_threads`` — structured objects or legacy one-line strings."""
+    out: list[OpenThread] = []
+    if not isinstance(raw, list):
+        return out
+    for item in raw:
+        if isinstance(item, str):
+            s = item.strip()
+            if s:
+                out.append(OpenThread(last_snapshot=s))
+            continue
+        if not isinstance(item, dict):
+            continue
+        topic = str(item.get("topic", "") or "").strip()
+        last_status = str(
+            item.get("last_status", "") or item.get("last_state", "") or ""
+        ).strip()
+        last_seen = str(
+            item.get("last_seen", "") or item.get("last_seen_range", "") or ""
+        ).strip()
+        last_snapshot = str(
+            item.get("last_snapshot", "")
+            or item.get("verbatim", "")
+            or item.get("last_text", "")
+            or ""
+        ).strip()
+        why_unfinished = str(
+            item.get("why_unfinished", "") or item.get("reason", "") or ""
+        ).strip()
+        grounded_in = str(
+            item.get("grounded_in", "") or item.get("source", "") or ""
+        ).strip()
+        if not any(
+            (topic, last_status, last_seen, last_snapshot, why_unfinished, grounded_in)
+        ):
+            continue
+        out.append(
+            OpenThread(
+                topic=topic,
+                last_status=last_status,
+                last_seen=last_seen,
+                last_snapshot=last_snapshot,
+                why_unfinished=why_unfinished,
+                grounded_in=grounded_in,
+            )
+        )
+    return out[:5]
+
+
 def _coerce_changes(raw: Any) -> list[ChangeItem]:
     out: list[ChangeItem] = []
     if not isinstance(raw, list):
@@ -231,7 +379,9 @@ def _cluster_themes(
         logger.warning("Theme-cluster pass returned non-dict; treating as empty.")
         return [], [], 0
     themes = _coerce_themes(response.get("themes"))
-    one_offs = _coerce_one_offs(response.get("notable_one_offs"))
+    one_offs = prioritize_mail_meeting_one_offs(
+        _coerce_one_offs(response.get("notable_one_offs"))
+    )
     try:
         coverage = int(response.get("coverage_minutes", 0) or 0)
     except (TypeError, ValueError):
@@ -374,9 +524,7 @@ def synthesize_recap(
         str(x).strip() for x in (response.get("regularities") or []) if str(x).strip()
     ]
     recap.change_vs_previous = _coerce_changes(response.get("change_vs_previous"))
-    recap.open_threads = [
-        str(x).strip() for x in (response.get("open_threads") or []) if str(x).strip()
-    ]
+    recap.open_threads = _coerce_open_threads(response.get("open_threads"))
 
     # If the recap pass forgot the regularities, fall back to the upstream
     # pipeline's own grounded sentences — the prompt explicitly says these
@@ -391,6 +539,9 @@ __all__ = [
     "Theme",
     "NotableOneOff",
     "ChangeItem",
+    "OpenThread",
     "Recap",
+    "is_mail_meeting_notable_one_off",
+    "prioritize_mail_meeting_one_offs",
     "synthesize_recap",
 ]

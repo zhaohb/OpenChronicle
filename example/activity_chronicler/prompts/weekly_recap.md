@@ -76,6 +76,17 @@ Do not compare against windows the input does not give you. Do not invent "this 
 
 **Regularity surfacing.** The `regularities` array is a *compressed roll-up* of the upstream `Observed regularity:` lines plus any clearly repeated theme this window. Each entry must be groundable to either (a) a verbatim quote from a regularity line, (b) ≥ 2 sub_tasks across different days within the window, or (c) a matching entry in `user-*.md` durable context. If you can't ground it, drop it. Do not produce more than 5 regularity items.
 
+**Open threads — last known state (required shape).** The `open_threads` array lists strands that still look **unfinished at the end of the window** (e.g. email draft in composer with no in-window sent follow-up, question typed but no reply sub_task, explicit TODO with no closing sub_task). Each item MUST be a **JSON object** (not a one-line string) with exactly these string keys — all values plain text, no nested objects:
+
+- `topic`: short concrete label (prefer the user's language when the sources are Chinese).
+- `last_status`: one factual sentence describing the **last recorded** state in the inputs (what the UI / sub_task line showed).
+- `last_seen`: MUST match **verbatim** one line from a theme's `evidence_ranges` OR the `range` field of a notable one-off that supports this thread.
+- `last_snapshot`: the **longest verbatim excerpt** still present in themes / one-offs for this strand (composer body, quoted email, typed question). Copy **exactly** from the input; use `""` only if the upstream text was never quoted. Never paraphrase here.
+- `why_unfinished`: one sentence: what is **missing** before the strand would read as closed (e.g. no sent-mail / no reply / no commit after the draft).
+- `grounded_in`: audit trail — name the theme `name` and/or the one-off `range` you relied on.
+
+If nothing qualifies, return `[]`. **Max 5 objects.** Do not merge unrelated drafts into one object.
+
 ## Output
 
 Return a JSON object with exactly these fields:
@@ -86,7 +97,7 @@ Return a JSON object with exactly these fields:
 - `themes`: array, copied through from the input themes pass with NO modifications to `name`, `apps`, `approx_minutes`, or `evidence_ranges`. You may rewrite `description` for tone IF AND ONLY IF you preserve every verbatim quote it carried; otherwise leave `description` exactly as given.
 - `regularities`: array of 0-5 short sentences, each starting with the literal phrase `Observed regularity:` (matches the OpenChronicle classifier convention). Each must be grounded as described above. If nothing qualifies, return `[]`.
 - `change_vs_previous`: array of 0-6 items, each `{{"kind": "new_theme" | "dropped_theme" | "app_shift" | "tempo_shift", "note": "<one sentence>"}}`. Empty array if no `previous_text` was given OR no change is groundable.
-- `open_threads`: array of 0-5 items, each one short sentence describing a strand of work that appears unfinished at the end of the window — e.g. a draft typed but not sent, a project mentioned in late sub_tasks with no closing entry, a task explicitly typed as TODO. Must be groundable in a sub_task or theme; otherwise empty.
+- `open_threads`: array of **0-5 objects** (see **Open threads — last known state** above). Empty array if nothing qualifies.
 - `coverage_note`: 1 sentence. Compare `coverage_minutes` (sum of theme approx_minutes from input) against `total_minutes` from the table. State, plainly, what fraction of the window's tracked time the themes account for and that the residual is "miscellaneous short interactions" — do not invent extra themes for the residual.
 
 Output ONLY the JSON object, no markdown fences, no surrounding prose, no extra fields.
@@ -106,7 +117,14 @@ Output ONLY the JSON object, no markdown fences, no surrounding prose, no extra 
     {{"kind": "app_shift", "note": "Microsoft Edge time dropped from 220 min last week to 90 min this week as docs reading wound down."}}
   ],
   "open_threads": [
-    "An Outlook draft \\"renewal pricing aligned, awaiting legal sign-off\\" was typed Friday but no sent-mail sub_task followed in the window."
+    {{
+      "topic": "Customer A renewal",
+      "last_status": "Outlook composer held a renewal reply draft; no sent-mail sub_task later in the window.",
+      "last_seen": "2026-05-09 16:20-16:45, Outlook",
+      "last_snapshot": "\\"renewal pricing aligned, awaiting legal sign-off\\"",
+      "why_unfinished": "No sub_task after Friday shows send, archive, or meeting booked for that thread.",
+      "grounded_in": "notable_one_off range 2026-05-09 16:20-16:45, Outlook + theme Customer A renewal"
+    }}
   ],
   "coverage_note": "Themes account for 470 of the 540 tracked minutes (~87%); the remaining ~70 min are short app-switching interactions and not surfaced as themes."
 }}
@@ -121,8 +139,9 @@ Output ONLY the JSON object, no markdown fences, no surrounding prose, no extra 
   "regularities": ["The user prefers focused work."],
   "change_vs_previous": [
     {{"kind": "tempo_shift", "note": "The user seems to be working harder lately."}}
-  ]
+  ],
+  "open_threads": ["Something vague was left unfinished with no verbatim snapshot."]
 }}
 ```
 
-(Headline editorial; summary names no apps or evidence; regularities and change items not groundable; no quoted authored text.)
+(Headline editorial; summary names no apps or evidence; regularities and change items not groundable; no quoted authored text; `open_threads` as vague one-line strings instead of structured last-state objects.)

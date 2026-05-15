@@ -171,6 +171,10 @@ class LLMClient:
             kwargs["max_tokens"] = mt
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
+        # Ollama: disable thinking/reasoning prefix so JSON and plain chat bodies stay parseable.
+        # LiteLLM maps this to the Ollama `think` request field.
+        if model.startswith("ollama/"):
+            kwargs["think"] = False
 
         try:
             response = litellm.completion(**kwargs)

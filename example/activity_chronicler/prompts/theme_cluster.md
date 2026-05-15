@@ -73,6 +73,8 @@ Return a JSON object with exactly these fields:
 - `notable_one_offs`: array of single-instance activities that don't form a theme but were either long (≥ 30 min) or carry a verbatim quote worth keeping. Each item:
     - `range`: `YYYY-MM-DD HH:MM-HH:MM, <app>`
     - `note`: 1 sentence, may include a verbatim quote in double quotes.
+    - For **email / chat drafts** that look **unfinished** (composer text with no sent confirmation in later sub_tasks), prefer the **longest verbatim excerpt** the sub_task still contains — the weekly recap pass will turn this into a structured "last known state" for the reader.
+    - **Email, calendar, and meetings — prioritize:** When activity is in mail clients (Outlook, Mail, Thunderbird, …), calendar surfaces, or meeting apps (Microsoft Teams, Zoom, Webex, Google Meet, Skype, …), **bias toward including** a `notable_one_off` even when the block is **shorter than 30 minutes**, if the sub_task shows concrete work: thread or subject line, invite title, attendee-facing text, reply/draft body, or meeting follow-up. Browser windows (Edge/Chrome) count when the sub_task text clearly references mail/calendar/meeting UI (inbox, invite, join link, conference title). Still do not invent ranges: every `range` must be copied verbatim from a sub_task header.
 - `coverage_minutes`: integer. Sum of `approx_minutes` across themes (so the caller can compute the unaccounted-for residual against the table's `total_minutes`).
 
 If the window is empty, return `{{"themes": [], "notable_one_offs": [], "coverage_minutes": 0}}`. Do not invent themes to fill space.

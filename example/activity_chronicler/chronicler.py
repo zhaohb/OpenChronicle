@@ -41,12 +41,14 @@ from shared.memory_loader import (
     load_memory_files,
 )
 
-from .stats import ActivityStats, compute_stats, parse_event_entries
+from .stats import ActivityStats, build_compact_timeline_lines, compute_stats, parse_event_entries
 from .synthesizer import (
     ChangeItem,
     NotableOneOff,
+    OpenThread,
     Recap,
     Theme,
+    is_mail_meeting_notable_one_off,
     synthesize_recap,
 )
 
@@ -261,6 +263,28 @@ def _format_minutes(mins: int) -> str:
     return f"{h} 小时 {m} 分钟" if m else f"{h} 小时"
 
 
+def _render_open_thread_markdown(ot: OpenThread) -> list[str]:
+    """§九 — structured last-known-state, or legacy one-line string."""
+    if ot.is_legacy_flat_sentence():
+        return [f"- {ot.last_snapshot.strip()}"]
+
+    title = ot.topic.strip() or "未命名线索"
+    lines: list[str] = [f"- **{title}**"]
+    lines.append(f"  - 最后观测：{ot.last_seen.strip() or '—'}")
+    lines.append(f"  - 最后状态：{ot.last_status.strip() or '—'}")
+    snap = ot.last_snapshot.strip()
+    if snap:
+        lines.append("  - 摘录/原文：")
+        for ln in snap.splitlines() or [snap]:
+            lines.append(f"    {ln}")
+    else:
+        lines.append("  - 摘录/原文：—")
+    lines.append(f"  - 未闭环原因：{ot.why_unfinished.strip() or '—'}")
+    if ot.grounded_in.strip():
+        lines.append(f"  - 证据出处：{ot.grounded_in.strip()}")
+    return lines
+
+
 def render_markdown(recap: Recap, owner_label: str = "我") -> str:
     """Render a :class:`Recap` to a long-term-memory Markdown artifact."""
     s = recap.stats
@@ -293,13 +317,25 @@ def render_markdown(recap: Recap, owner_label: str = "我") -> str:
         lines.append(f"- **时间分布要点**：{recap.time_breakdown_note}")
     lines.append("")
 
+    tl = build_compact_timeline_lines(s)
+    if tl:
+        lines.append("## 二、活动简序（时间线）")
+        lines.append("")
+        lines.append(
+            "_由 `event-*.md` 中的 sub_task 按「同日 + 同应用 + 时间间隙」自动合并；"
+            "间隙上限随条数增大（最长约 12 小时），避免列表过长。_"
+        )
+        lines.append("")
+        lines.extend(tl)
+        lines.append("")
+
     if recap.summary:
-        lines.append("## 二、本窗口叙事")
+        lines.append("## 三、本窗口叙事")
         lines.append("")
         lines.append(recap.summary)
         lines.append("")
 
-    lines.append("## 三、主题分布")
+    lines.append("## 四、主题分布")
     lines.append("")
     if recap.themes:
         for t in recap.themes:
@@ -326,13 +362,30 @@ def render_markdown(recap: Recap, owner_label: str = "我") -> str:
         lines.append("")
 
     if recap.notable_one_offs:
-        lines.append("## 四、值得记录的单次活动")
+        lines.append("## 五、值得记录的单次活动")
         lines.append("")
-        for o in recap.notable_one_offs:
-            lines.append(f"- `{o.range}` — {o.note}")
-        lines.append("")
+        mail_meeting = [o for o in recap.notable_one_offs if is_mail_meeting_notable_one_off(o)]
+        other_one = [o for o in recap.notable_one_offs if not is_mail_meeting_notable_one_off(o)]
+        if mail_meeting:
+            lines.append(
+                "> **邮件 / 会议优先**：下列为邮件、日历或视频会议相关的一次性活动（已由主题聚类优先抽取；"
+                "输出顺序经应用名与关键词启发式前置）。"
+            )
+            lines.append("")
+            lines.append("### 邮件与会议相关")
+            lines.append("")
+            for o in mail_meeting:
+                lines.append(f"- `{o.range}` — {o.note}")
+            lines.append("")
+        if other_one:
+            if mail_meeting:
+                lines.append("### 其他单次活动")
+                lines.append("")
+            for o in other_one:
+                lines.append(f"- `{o.range}` — {o.note}")
+            lines.append("")
 
-    lines.append("## 五、应用使用 Top 列表")
+    lines.append("## 六、应用使用 Top 列表")
     lines.append("")
     rows = _render_top_apps(s)
     if rows:
@@ -341,7 +394,7 @@ def render_markdown(recap: Recap, owner_label: str = "我") -> str:
         lines.append("> 没有可统计的应用使用数据。")
     lines.append("")
 
-    lines.append("## 六、时间分布速览")
+    lines.append("## 七、时间分布速览")
     lines.append("")
     if s.by_weekday:
         lines.append("**按星期（分钟）**")
@@ -369,24 +422,24 @@ def render_markdown(recap: Recap, owner_label: str = "我") -> str:
         lines.append("")
 
     if recap.regularities:
-        lines.append("## 七、长期模式（本窗口观察）")
+        lines.append("## 八、长期模式（本窗口观察）")
         lines.append("")
         for r in recap.regularities:
             lines.append(f"- {r}")
         lines.append("")
 
     if recap.change_vs_previous:
-        lines.append("## 八、与上一窗口对比")
+        lines.append("## 九、与上一窗口对比")
         lines.append("")
         for line in _render_change_table(recap.change_vs_previous):
             lines.append(line)
         lines.append("")
 
     if recap.open_threads:
-        lines.append("## 九、未完结线索")
+        lines.append("## 十、未完结线索（含最后已知状态）")
         lines.append("")
-        for t in recap.open_threads:
-            lines.append(f"- {t}")
+        for ot in recap.open_threads:
+            lines.extend(_render_open_thread_markdown(ot))
         lines.append("")
 
     return "\n".join(lines)

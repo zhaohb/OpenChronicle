@@ -267,3 +267,121 @@ def format_table(stats: ActivityStats, top_n: int = 10) -> str:
     for day_str in sorted(stats.by_day.keys()):
         lines.append(f"- {day_str}: {stats.by_day[day_str]}")
     return "\n".join(lines)
+
+
+def _snippet_from_subtask_text(text: str, max_len: int = 96) -> str:
+    """One-line preview for timeline rows."""
+    s = (text or "").strip()
+    if not s:
+        return "（无描述）"
+    s = re.sub(r"\s+", " ", s)
+    if len(s) <= max_len:
+        return s
+    return s[: max_len - 1] + "…"
+
+
+@dataclass(slots=True)
+class _TimelineSeg:
+    start: datetime
+    end: datetime
+    display_app: str
+    app_key: str
+    snippets: list[str]
+
+
+def _merge_subtasks_for_timeline(
+    sub_tasks: list[SubTask],
+    *,
+    merge_gap_minutes: float,
+) -> list[_TimelineSeg]:
+    """Merge adjacent same-app segments when the quiet gap ≤ merge_gap_minutes."""
+    if not sub_tasks:
+        return []
+    out: list[_TimelineSeg] = []
+    cur: _TimelineSeg | None = None
+    for st in sub_tasks:
+        app_key = st.app.strip().lower()
+        if cur is None:
+            cur = _TimelineSeg(
+                start=st.start,
+                end=st.end,
+                display_app=st.app.strip(),
+                app_key=app_key,
+                snippets=[_snippet_from_subtask_text(st.text)],
+            )
+            continue
+        gap = (st.start - cur.end).total_seconds() / 60.0
+        same_day = st.start.date() == cur.start.date()
+        same_app = app_key == cur.app_key
+        # Overlap or tiny negative clock skew — fold in.
+        merge = same_app and same_day and (gap <= merge_gap_minutes or gap < 0)
+        if merge:
+            if st.end > cur.end:
+                cur.end = st.end
+            cur.snippets.append(_snippet_from_subtask_text(st.text))
+        else:
+            out.append(cur)
+            cur = _TimelineSeg(
+                start=st.start,
+                end=st.end,
+                display_app=st.app.strip(),
+                app_key=app_key,
+                snippets=[_snippet_from_subtask_text(st.text)],
+            )
+    if cur is not None:
+        out.append(cur)
+    return out
+
+
+def build_compact_timeline_lines(
+    stats: ActivityStats,
+    *,
+    max_segments: int = 44,
+) -> list[str]:
+    """Deterministic, adaptive-gap timeline for Markdown (Chinese labels).
+
+    Same-app bursts on the same calendar day are merged when the gap between
+    sub_tasks is below a threshold. The threshold grows (6 → 720 min) until the
+    segment count fits ``max_segments``, so dense weeks compress and quiet days
+    stay granular.
+    """
+    sts = [
+        st
+        for st in stats.sub_tasks
+        if stats.since <= st.day <= stats.until and st.duration_minutes > 0
+    ]
+    sts.sort(key=lambda s: s.start)
+    if not sts:
+        return []
+    # Hard cap — pathological event files should not blow up render time.
+    sts = sts[:3000]
+
+    gap_schedule = (6, 12, 20, 35, 55, 90, 150, 240, 360, 720)
+    merged: list[_TimelineSeg] = []
+    for gap in gap_schedule:
+        merged = _merge_subtasks_for_timeline(sts, merge_gap_minutes=float(gap))
+        if len(merged) <= max_segments:
+            break
+
+    lines: list[str] = []
+    prev_date: date | None = None
+    for seg in merged:
+        d = seg.start.date()
+        if prev_date != d:
+            if prev_date is not None:
+                lines.append("")
+            lines.append(f"### {d.isoformat()}")
+            lines.append("")
+            prev_date = d
+        dur = int(round(max((seg.end - seg.start).total_seconds() / 60.0, 0)))
+        if seg.end.date() != seg.start.date():
+            span = f"{seg.start.strftime('%m-%d %H:%M')} → {seg.end.strftime('%m-%d %H:%M')}"
+        else:
+            span = f"{seg.start.strftime('%H:%M')}–{seg.end.strftime('%H:%M')}"
+        summary = seg.snippets[0]
+        if len(seg.snippets) > 1:
+            summary = f"{summary}（等 {len(seg.snippets)} 条相邻记录已合并）"
+        lines.append(
+            f"- **{span}** · `{seg.display_app}` · 约 **{dur}** 分钟 — {summary}"
+        )
+    return lines

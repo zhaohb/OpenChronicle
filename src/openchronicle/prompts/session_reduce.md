@@ -49,7 +49,7 @@ If nothing qualifies, omit the sentence. The classifier's default is silence; an
 
 ### JSON format (required — machine parsing)
 
-Your **entire** reply must be one raw JSON object. The first non-whitespace character must be `{` and the last must be `}`.
+Your **entire** reply must be one raw JSON object. The first non-whitespace character must be `{{` and the last must be `}}`.
 
 **Forbidden:** markdown code fences (` ``` ` / ` ```json `), any text before or after the JSON, or extra top-level fields.
 

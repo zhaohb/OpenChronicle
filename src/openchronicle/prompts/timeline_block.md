@@ -35,7 +35,7 @@ In chat / IM apps, treat typing in the message composer as participation (focuse
 
 ### JSON format (required — machine parsing)
 
-Your **entire** reply must be one raw JSON object. The first non-whitespace character must be `{` and the last must be `}`.
+Your **entire** reply must be one raw JSON object. The first non-whitespace character must be `{{` and the last must be `}}`.
 
 **Forbidden** (these cause the pipeline to discard your output and fall back to empty summaries):
 
@@ -46,13 +46,13 @@ Your **entire** reply must be one raw JSON object. The first non-whitespace char
 **Good** (reply body only):
 
 ```
-{"entries": ["[Notes] Shopping list: user drafted …"]}
+{{"entries": ["[Notes] Shopping list: user drafted …"]}}
 ```
 
 **Bad** (do not do this — fenced JSON is rejected):
 
     ```json
-    {"entries": ["…"]}
+    {{"entries": ["…"]}}
     ```
 
 Return a JSON object with exactly one field:

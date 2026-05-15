@@ -12,7 +12,7 @@ from .stats import (
     parse_event_entries,
     compute_stats,
 )
-from .synthesizer import synthesize_recap
+from .synthesizer import OpenThread, synthesize_recap
 from .chronicler import build_recap, render_markdown
 
 __all__ = [
@@ -21,6 +21,7 @@ __all__ = [
     "parse_event_entries",
     "compute_stats",
     "synthesize_recap",
+    "OpenThread",
     "build_recap",
     "render_markdown",
 ]
