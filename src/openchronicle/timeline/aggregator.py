@@ -239,13 +239,13 @@ def produce_block_for_window(
             messages=[{"role": "user", "content": prompt}],
             json_mode=True,
         )
-        text = llm_mod.extract_text(resp).strip()
-        data = json.loads(text) if text else {}
-        raw = data.get("entries") if isinstance(data, dict) else None
+        text = llm_mod.extract_text(resp)
+        data = llm_mod.parse_json_object(text)
+        if text.strip() and data is None:
+            logger.warning("timeline: malformed JSON from LLM (unparseable response)")
+        raw = data.get("entries") if data else None
         if isinstance(raw, list):
             entries = [str(e).strip() for e in raw if str(e).strip()]
-    except json.JSONDecodeError as exc:
-        logger.warning("timeline: malformed JSON from LLM: %s", exc)
     except Exception as exc:  # noqa: BLE001
         logger.warning("timeline: LLM call failed: %s", exc)
 

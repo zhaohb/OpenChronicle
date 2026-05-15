@@ -122,6 +122,49 @@ def extract_text(response: Any) -> str:
         return ""
 
 
+def _strip_markdown_json_fences(text: str) -> str:
+    """Remove optional ``` / ```json wrappers from an LLM JSON body."""
+    cleaned = text.strip()
+    if not cleaned.startswith("```"):
+        return cleaned
+    lines = cleaned.splitlines()
+    if lines and lines[0].lstrip().startswith("```"):
+        lines = lines[1:]
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if lines and lines[-1].strip() == "```":
+        lines.pop()
+    return "\n".join(lines).strip()
+
+
+def _extract_json_object_span(text: str) -> str:
+    """If the model prefixed prose, keep the outermost `{` … `}` span."""
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end > start:
+        return text[start : end + 1]
+    return text
+
+
+def parse_json_object(text: str) -> dict[str, Any] | None:
+    """Parse a JSON object from LLM output.
+
+    Tolerates markdown code fences and short leading/trailing prose so local
+    backends (e.g. Ollama OpenVINO) that wrap ``response_format: json_object``
+    in ```json blocks still produce usable structured data.
+    """
+    cleaned = _strip_markdown_json_fences(text.strip())
+    if not cleaned:
+        return None
+    if cleaned[0] != "{":
+        cleaned = _extract_json_object_span(cleaned)
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def ping_stage(cfg: Config, stage: str, *, timeout: float = 5.0) -> PingResult:
     """Send a tiny round-trip request to the stage's configured model.
 

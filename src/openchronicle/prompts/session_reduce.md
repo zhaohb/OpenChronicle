@@ -47,6 +47,14 @@ If nothing qualifies, omit the sentence. The classifier's default is silence; an
 
 ## Output
 
+### JSON format (required — machine parsing)
+
+Your **entire** reply must be one raw JSON object. The first non-whitespace character must be `{` and the last must be `}`.
+
+**Forbidden:** markdown code fences (` ``` ` / ` ```json `), any text before or after the JSON, or extra top-level fields.
+
+**Good** (reply body only): `{{"summary": "…", "sub_tasks": ["…"]}}`
+
 Return a JSON object with exactly these fields:
 
 - `summary`: 2-4 sentences describing this window's core tasks, progress, and any clear task switches. Every named person / project / file / topic must be stated next to the app or channel it appeared in. If this window continues a task that the preceding entries already cover, lead with a one-clause acknowledgement ("continued …") before describing new progress.
@@ -55,4 +63,4 @@ Return a JSON object with exactly these fields:
   Group consecutive blocks that describe the same activity into one sub-task; split when the user switches app, switches subject, or starts a clearly new task. At least one entry. Use `involving —` if there is nothing notable. Multi-sentence sub_tasks are allowed when a verbatim quote is long — do NOT force everything into one short line at the cost of losing the user's typed content.
   **`<app name>` must be the canonical macOS application name as it appeared in the source blocks** (e.g. `Cursor`, `Claude`, `Google Chrome`, `Code - Insiders`) — not a slug, abbreviation, or human-friendly rename. A drill-down breadcrumb is appended to each line by code using exactly this app name; mismatches will cause raw-content lookups to fail.
 
-Output only the JSON object, with no markdown fences and no surrounding prose. Do not emit any other fields.
+Output only the raw JSON object — no markdown fences and no surrounding prose. Do not emit any other fields.

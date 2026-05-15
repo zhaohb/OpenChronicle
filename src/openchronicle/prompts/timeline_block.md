@@ -33,6 +33,28 @@ In chat / IM apps, treat typing in the message composer as participation (focuse
 
 ## Output
 
+### JSON format (required — machine parsing)
+
+Your **entire** reply must be one raw JSON object. The first non-whitespace character must be `{` and the last must be `}`.
+
+**Forbidden** (these cause the pipeline to discard your output and fall back to empty summaries):
+
+- Markdown code fences — do **not** wrap the JSON in ` ``` ` or ` ```json `
+- Any prose before or after the JSON ("Here is…", "Sure!", etc.)
+- JSON inside a string or as a quoted blob
+
+**Good** (reply body only):
+
+```
+{"entries": ["[Notes] Shopping list: user drafted …"]}
+```
+
+**Bad** (do not do this — fenced JSON is rejected):
+
+    ```json
+    {"entries": ["…"]}
+    ```
+
 Return a JSON object with exactly one field:
 
 - `entries`: an ordered array of activity records. One record per distinct conversation / context / tab / file. Do not collapse independent conversations. Do not add a time prefix; the window's time range is already known to the caller.
@@ -59,9 +81,9 @@ Source snapshots (illustrative):
    | Q3 roadmap · Priorities · Owner: Alice · Deadline: Oct 14
 ```
 
-Good output:
+Good output (raw JSON only — no fences):
 
-```json
+```
 {{
   "entries": [
     "[Notes] Shopping list: user drafted a list, latest version \"milk, eggs, flour, butter\".",
@@ -70,9 +92,9 @@ Good output:
 }}
 ```
 
-Bad output (do NOT do this):
+Bad output (do NOT do this — wrong shape **and** missing verbatim facts):
 
-```json
+```
 {{
   "entries": [
     "[Notes] typed a shopping list, involving —",
@@ -82,5 +104,3 @@ Bad output (do NOT do this):
 ```
 
 The bad version threw away the verbatim list content ("milk, eggs, flour, butter"), the URL, and the specific owner / deadline that were visible on the page. Those facts are exactly what downstream reducers need to preserve.
-
-Output only the JSON object, no markdown fences and no surrounding prose.

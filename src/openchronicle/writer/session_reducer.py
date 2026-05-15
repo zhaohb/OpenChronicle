@@ -503,16 +503,14 @@ def _call_reducer_llm(
             messages=[{"role": "user", "content": prompt}],
             json_mode=True,
         )
-        text = llm_mod.extract_text(resp).strip()
-        if not text:
+        text = llm_mod.extract_text(resp)
+        if not text.strip():
             return None
-        data = json.loads(text)
-        if isinstance(data, dict):
-            return data
-        return None
-    except json.JSONDecodeError as exc:
-        logger.warning("reducer: malformed JSON from LLM: %s", exc)
-        return None
+        data = llm_mod.parse_json_object(text)
+        if data is None:
+            logger.warning("reducer: malformed JSON from LLM (unparseable response)")
+            return None
+        return data
     except Exception as exc:  # noqa: BLE001
         logger.warning("reducer: LLM call failed: %s", exc)
         return None
