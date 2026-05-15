@@ -992,10 +992,18 @@ def rebuild_captures_index() -> None:
     _init()
     buf = paths.capture_buffer_dir()
     if not buf.exists():
+        with fts.cursor() as conn:
+            conn.execute("DELETE FROM captures")
         console.print("[yellow]No capture-buffer directory; nothing to rebuild.[/yellow]")
         return
 
     files = sorted(p for p in buf.iterdir() if p.is_file() and p.suffix == ".json")
+    file_ids = {p.stem for p in files}
+    with fts.cursor() as conn:
+        rows = conn.execute("SELECT id FROM captures").fetchall()
+    stale_ids = [row["id"] for row in rows if row["id"] not in file_ids]
+    _delete_capture_rows(stale_ids)
+
     if not files:
         console.print("[yellow]capture-buffer is empty; nothing to rebuild.[/yellow]")
         return
@@ -1066,15 +1074,40 @@ def _warn_if_running() -> None:
         )
 
 
+def _delete_capture_rows(capture_ids: list[str]) -> None:
+    """Delete capture rows in one explicit transaction.
+
+    fts.connect uses autocommit mode, so sqlite3's connection context manager
+    does not open a transaction for us here.
+    """
+    if not capture_ids:
+        return
+    with fts.cursor() as conn:
+        conn.execute("BEGIN")
+        try:
+            conn.executemany(
+                "DELETE FROM captures WHERE id=?",
+                ((capture_id,) for capture_id in capture_ids),
+            )
+            conn.execute("COMMIT")
+        except Exception:  # noqa: BLE001
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+
+
 def _clean_captures() -> int:
     buf = paths.capture_buffer_dir()
     if not buf.exists():
         return 0
+    removed_stems: list[str] = []
     n = 0
     for p in buf.iterdir():
         if p.suffix == ".json" and p.is_file():
             p.unlink()
+            removed_stems.append(p.stem)
             n += 1
+    _delete_capture_rows(removed_stems)
     return n
 
 
