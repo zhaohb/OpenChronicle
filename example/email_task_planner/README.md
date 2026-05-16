@@ -22,6 +22,17 @@ OpenChronicle 已经能捕获用户桌面上出现过的邮件窗口和用户 ty
 - **不常驻后台**：本应用只生成 `.ics`，提醒由用户导入后的日历客户端负责。
 - **不强行造截止时间**：没有明确时间节点的事项只进入 Markdown，不写入日历。
 
+## 防幻觉校验（代码侧）
+
+LLM 输出后会经 `filter_grounded_tasks` 过滤，**不满足则不会写入 Markdown / `.ics`**：
+
+- `source_session_ids` 必须出现在本次拉取的 event 条目的 `(session=...)` 中；
+- 每条 `evidence` 至少有一段引文或子串能在对应 event 正文中找到；
+- `source_subject`、`source_app` 须在 event 文本中出现（浏览器邮件允许 `Chrome` / `Gmail` 等片段匹配）；
+- 与旧版 prompt 示例相同的固定字段（如 `sess_4a2f1c`、`客户现场支持时间确认`）若不在 event 中，一律丢弃。
+
+报告顶部可能出现：`已丢弃 N 条无法在 event-daily 中核对…`。
+
 ## 用法
 
 ```bash
@@ -81,20 +92,19 @@ _日历文件：`mailtasks/email-tasks-2026-05-09.ics`_
 
 | 时间节点 | 负责人 | 待办 | 来源 | 置信度 |
 |---|---|---|---|---|
-| 2026-05-10 09:00 | me | 回复客户确认 5/12 14:00 上门时间。 | 客户现场支持时间确认 | high |
+| 2026-05-16 18:00 | me | 在 Gmail 线程中确认周五下班前回复。 | Q3 roadmap thread | high |
 
-### 1. 回复客户确认 5/12 14:00 上门时间。
+### 1. 在 Gmail 线程中确认周五下班前回复。
 
 - **负责人**：me
-- **内容**：回复客户确认 5/12 14:00 上门时间。
-- **来源应用**：Outlook
-- **邮件/窗口标题**：客户现场支持时间确认
-- **时间节点**：2026-05-10 09:00（时间由默认值补齐）
+- **内容**：在 Gmail 线程中确认周五下班前回复。
+- **来源应用**：Google Chrome
+- **邮件/窗口标题**：Q3 roadmap thread
+- **时间节点**：2026-05-16 18:00
 - **置信度**：high
-- **来源 session**：`sess_4a2f1c`
+- **来源 session**：`sess_abc123`
 - **证据**：
-  - Outlook reply typed "我们 5/12 14:00 在客户现场见"
-  - email body includes "请明天前确认"
+  - `[14:02-14:18, Google Chrome] user typed reply "confirm Friday EOD"`
 ```
 
 对应 `.ics` 会包含：
@@ -102,7 +112,7 @@ _日历文件：`mailtasks/email-tasks-2026-05-09.ics`_
 ```text
 BEGIN:VCALENDAR
 BEGIN:VEVENT
-SUMMARY:邮件待办：回复客户确认 5/12 14:00 上门时间。
+SUMMARY:邮件待办：在 Gmail 线程中确认周五下班前回复。
 DTSTART:20260510T090000
 BEGIN:VALARM
 TRIGGER:-PT30M

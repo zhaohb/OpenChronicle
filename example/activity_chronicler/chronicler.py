@@ -223,10 +223,10 @@ async def build_recap(
 # ---------------------------------------------------------------------------
 
 _KIND_LABEL = {
-    "new_theme": "新增主题",
-    "dropped_theme": "消失主题",
-    "app_shift": "应用占比变化",
-    "tempo_shift": "节奏变化",
+    "new_theme": "New theme",
+    "dropped_theme": "Dropped theme",
+    "app_shift": "App mix shift",
+    "tempo_shift": "Tempo shift",
 }
 
 
@@ -235,7 +235,7 @@ def _render_change_table(items: Iterable[ChangeItem]) -> list[str]:
     items = list(items)
     if not items:
         return rows
-    rows.append("| 类别 | 说明 |")
+    rows.append("| Category | Note |")
     rows.append("|---|---|")
     for c in items:
         label = _KIND_LABEL.get(c.kind, c.kind)
@@ -248,7 +248,7 @@ def _render_top_apps(stats: ActivityStats, n: int = 8) -> list[str]:
     top = stats.top_apps(n)
     if not top:
         return rows
-    rows.append("| 应用 | 时长 (min) | 占比 |")
+    rows.append("| App | Time (min) | Share |")
     rows.append("|---|---|---|")
     for app_name, mins in top:
         rows.append(f"| {app_name} | {mins} | {stats.percent(mins)}% |")
@@ -257,43 +257,43 @@ def _render_top_apps(stats: ActivityStats, n: int = 8) -> list[str]:
 
 def _format_minutes(mins: int) -> str:
     if mins < 60:
-        return f"{mins} 分钟"
+        return f"{mins} min"
     h = mins // 60
     m = mins % 60
-    return f"{h} 小时 {m} 分钟" if m else f"{h} 小时"
+    return f"{h} hr {m} min" if m else f"{h} hr"
 
 
 def _render_open_thread_markdown(ot: OpenThread) -> list[str]:
-    """§九 — structured last-known-state, or legacy one-line string."""
+    """Structured last-known-state, or legacy one-line string."""
     if ot.is_legacy_flat_sentence():
         return [f"- {ot.last_snapshot.strip()}"]
 
-    title = ot.topic.strip() or "未命名线索"
+    title = ot.topic.strip() or "Untitled thread"
     lines: list[str] = [f"- **{title}**"]
-    lines.append(f"  - 最后观测：{ot.last_seen.strip() or '—'}")
-    lines.append(f"  - 最后状态：{ot.last_status.strip() or '—'}")
+    lines.append(f"  - Last seen: {ot.last_seen.strip() or '—'}")
+    lines.append(f"  - Last status: {ot.last_status.strip() or '—'}")
     snap = ot.last_snapshot.strip()
     if snap:
-        lines.append("  - 摘录/原文：")
+        lines.append("  - Excerpt / verbatim:")
         for ln in snap.splitlines() or [snap]:
             lines.append(f"    {ln}")
     else:
-        lines.append("  - 摘录/原文：—")
-    lines.append(f"  - 未闭环原因：{ot.why_unfinished.strip() or '—'}")
+        lines.append("  - Excerpt / verbatim: —")
+    lines.append(f"  - Why unfinished: {ot.why_unfinished.strip() or '—'}")
     if ot.grounded_in.strip():
-        lines.append(f"  - 证据出处：{ot.grounded_in.strip()}")
+        lines.append(f"  - Evidence: {ot.grounded_in.strip()}")
     return lines
 
 
-def render_markdown(recap: Recap, owner_label: str = "我") -> str:
+def render_markdown(recap: Recap, owner_label: str = "Me") -> str:
     """Render a :class:`Recap` to a long-term-memory Markdown artifact."""
     s = recap.stats
     lines: list[str] = []
-    lines.append(f"# 桌面活动回顾 · {owner_label}")
+    lines.append(f"# Desktop Activity Recap · {owner_label}")
     lines.append("")
     lines.append(
-        f"_窗口：{recap.window_label}（{recap.since.isoformat()} → {recap.until.isoformat()}）　"
-        f"生成时间：{recap.generated_at.strftime('%Y-%m-%d %H:%M')}_"
+        f"_Window: {recap.window_label} ({recap.since.isoformat()} → {recap.until.isoformat()})  "
+        f"Generated: {recap.generated_at.strftime('%Y-%m-%d %H:%M')}_"
     )
     lines.append("")
 
@@ -301,56 +301,57 @@ def render_markdown(recap: Recap, owner_label: str = "我") -> str:
         lines.append("> " + recap.headline.replace("\n", " "))
         lines.append("")
 
-    lines.append("## 一、本窗口概览")
+    lines.append("## 1. Window Overview")
     lines.append("")
     lines.append(
-        f"- **可统计活动总时长**：{_format_minutes(s.total_minutes)}（{s.sub_task_count} 条 sub_task）"
+        f"- **Tracked activity time**: {_format_minutes(s.total_minutes)} ({s.sub_task_count} sub_tasks)"
     )
     if recap.coverage_minutes:
         lines.append(
-            f"- **主题覆盖**：{_format_minutes(recap.coverage_minutes)}"
-            f"（约 {s.percent(recap.coverage_minutes)}% 落入显式主题）"
+            f"- **Theme coverage**: {_format_minutes(recap.coverage_minutes)} "
+            f"(about {s.percent(recap.coverage_minutes)}% covered by explicit themes)"
         )
     if recap.coverage_note:
-        lines.append(f"- **覆盖说明**：{recap.coverage_note}")
+        lines.append(f"- **Coverage note**: {recap.coverage_note}")
     if recap.time_breakdown_note:
-        lines.append(f"- **时间分布要点**：{recap.time_breakdown_note}")
+        lines.append(f"- **Time-distribution note**: {recap.time_breakdown_note}")
     lines.append("")
 
     tl = build_compact_timeline_lines(s)
     if tl:
-        lines.append("## 二、活动简序（时间线）")
+        lines.append("## 2. Activity Timeline")
         lines.append("")
         lines.append(
-            "_由 `event-*.md` 中的 sub_task 按「同日 + 同应用 + 时间间隙」自动合并；"
-            "间隙上限随条数增大（最长约 12 小时），避免列表过长。_"
+            "_Built from `event-*.md` sub_tasks. Original granularity is preserved when the "
+            "timeline is short enough; only dense windows are merged with an adaptive same-day / "
+            "same-app / same-context gap threshold to keep the list compact._"
         )
         lines.append("")
         lines.extend(tl)
         lines.append("")
 
     if recap.summary:
-        lines.append("## 三、本窗口叙事")
+        lines.append("## 3. Narrative")
         lines.append("")
         lines.append(recap.summary)
         lines.append("")
 
-    lines.append("## 四、主题分布")
+    lines.append("## 4. Theme Distribution")
     lines.append("")
     if recap.themes:
         for t in recap.themes:
             lines.append(f"### {t.name}")
             lines.append("")
-            meta_bits = [f"约 {_format_minutes(t.approx_minutes)}"]
+            meta_bits = [f"about {_format_minutes(t.approx_minutes)}"]
             if t.apps:
-                meta_bits.append("／".join(t.apps))
-            lines.append("_" + "　·　".join(meta_bits) + "_")
+                meta_bits.append(" / ".join(t.apps))
+            lines.append("_" + " · ".join(meta_bits) + "_")
             lines.append("")
             if t.description:
                 lines.append(t.description)
                 lines.append("")
             if t.evidence_ranges:
-                lines.append("<details><summary>证据时间段</summary>")
+                lines.append("<details><summary>Evidence ranges</summary>")
                 lines.append("")
                 for r in t.evidence_ranges:
                     lines.append(f"- `{r}`")
@@ -358,52 +359,43 @@ def render_markdown(recap: Recap, owner_label: str = "我") -> str:
                 lines.append("</details>")
                 lines.append("")
     else:
-        lines.append("> 本窗口未聚出有效主题。")
+        lines.append("> No valid themes were clustered for this window.")
         lines.append("")
 
-    if recap.notable_one_offs:
-        lines.append("## 五、值得记录的单次活动")
+    mail_meeting = [
+        o for o in recap.notable_one_offs if is_mail_meeting_notable_one_off(o)
+    ]
+    if mail_meeting:
+        lines.append("## 5. Mail / Calendar / Meeting Signals")
         lines.append("")
-        mail_meeting = [o for o in recap.notable_one_offs if is_mail_meeting_notable_one_off(o)]
-        other_one = [o for o in recap.notable_one_offs if not is_mail_meeting_notable_one_off(o)]
-        if mail_meeting:
-            lines.append(
-                "> **邮件 / 会议优先**：下列为邮件、日历或视频会议相关的一次性活动（已由主题聚类优先抽取；"
-                "输出顺序经应用名与关键词启发式前置）。"
-            )
-            lines.append("")
-            lines.append("### 邮件与会议相关")
-            lines.append("")
-            for o in mail_meeting:
-                lines.append(f"- `{o.range}` — {o.note}")
-            lines.append("")
-        if other_one:
-            if mail_meeting:
-                lines.append("### 其他单次活动")
-                lines.append("")
-            for o in other_one:
-                lines.append(f"- `{o.range}` — {o.note}")
-            lines.append("")
+        lines.append(
+            "> Only communication-related fragments that may need follow-up or later review are shown here; "
+            "routine file browsing, transient input, and topic-less one-offs are hidden."
+        )
+        lines.append("")
+        for o in mail_meeting:
+            lines.append(f"- `{o.range}` — {o.note}")
+        lines.append("")
 
-    lines.append("## 六、应用使用 Top 列表")
+    lines.append("## 6. Top Apps")
     lines.append("")
     rows = _render_top_apps(s)
     if rows:
         lines.extend(rows)
     else:
-        lines.append("> 没有可统计的应用使用数据。")
+        lines.append("> No app-usage data was available.")
     lines.append("")
 
-    lines.append("## 七、时间分布速览")
+    lines.append("## 7. Time Distribution")
     lines.append("")
     if s.by_weekday:
-        lines.append("**按星期（分钟）**")
+        lines.append("**By weekday (min)**")
         for name in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]:
             if name in s.by_weekday:
                 lines.append(f"- {name}: {s.by_weekday[name]}")
         lines.append("")
     if s.by_hour_bucket:
-        lines.append("**按时段（分钟）**")
+        lines.append("**By time of day (min)**")
         for bucket in (
             "early-morning",
             "morning",
@@ -416,27 +408,27 @@ def render_markdown(recap: Recap, owner_label: str = "我") -> str:
                 lines.append(f"- {bucket}: {s.by_hour_bucket[bucket]}")
         lines.append("")
     if s.by_day:
-        lines.append("**按日期（分钟）**")
+        lines.append("**By date (min)**")
         for day_str in sorted(s.by_day.keys()):
             lines.append(f"- {day_str}: {s.by_day[day_str]}")
         lines.append("")
 
     if recap.regularities:
-        lines.append("## 八、长期模式（本窗口观察）")
+        lines.append("## 8. Long-Term Patterns Observed")
         lines.append("")
         for r in recap.regularities:
             lines.append(f"- {r}")
         lines.append("")
 
     if recap.change_vs_previous:
-        lines.append("## 九、与上一窗口对比")
+        lines.append("## 9. Compared With Previous Window")
         lines.append("")
         for line in _render_change_table(recap.change_vs_previous):
             lines.append(line)
         lines.append("")
 
     if recap.open_threads:
-        lines.append("## 十、未完结线索（含最后已知状态）")
+        lines.append("## 10. Open Threads (Last Known State)")
         lines.append("")
         for ot in recap.open_threads:
             lines.extend(_render_open_thread_markdown(ot))
@@ -596,7 +588,7 @@ def main(
         "--save-state",
         help="Write this run's state JSON for future --previous-state reuse.",
     ),
-    owner_label: str = typer.Option("我", "--owner", help="Owner label shown in the Markdown header."),
+    owner_label: str = typer.Option("Me", "--owner", help="Owner label shown in the Markdown header."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose logging."),
 ) -> None:
     """Generate a long-term desktop-activity recap from OpenChronicle's local memory."""

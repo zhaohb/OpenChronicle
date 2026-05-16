@@ -70,9 +70,16 @@ Return a JSON object with exactly these fields:
     - `apps`: deduplicated list of app names that appeared in cited sub_tasks (canonical names only, as in the time-distribution table).
     - `approx_minutes`: integer. Sum of durations of cited `evidence_ranges`, rounded to the nearest minute.
     - `evidence_ranges`: array of strings, each EXACTLY of the form `YYYY-MM-DD HH:MM-HH:MM, <app>` — copied verbatim from the input headers. ≥ 1 item required.
-- `notable_one_offs`: array of single-instance activities that don't form a theme but were either long (≥ 30 min) or carry a verbatim quote worth keeping. Each item:
+- `notable_one_offs`: array of **high-signal** single-instance activities that don't form a theme. Prefer an empty array over noisy filler. A one-off should normally be one of:
+    - mail / calendar / meeting activity with a concrete subject, invite, attendee-facing text, reply/draft, or follow-up
+    - an unfinished draft / message / note that may need later continuation
+    - a clear decision, commitment, error, incident, deadline, or unusual event that the user may need to recover later
+    - a long focused block (≥ 30 min) with a concrete topic, not just an app or file browser
+  Each item:
     - `range`: `YYYY-MM-DD HH:MM-HH:MM, <app>`
     - `note`: 1 sentence, may include a verbatim quote in double quotes.
+    - Do **not** output low-signal operational activity: session placeholders, unspecified apps, generic navigation, ordinary file browsing, incidental clicking, empty inputs, transient scratchpad text, or routine viewing of generated artifacts. A one-off must tell the reader something concrete they may care about later.
+    - A verbatim quote alone is **not** enough. Keep quoted text only when it represents recoverable work state: an unfinished draft, a commitment, a decision, a request, a deadline, an error, or another future-relevant fact.
     - For **email / chat drafts** that look **unfinished** (composer text with no sent confirmation in later sub_tasks), prefer the **longest verbatim excerpt** the sub_task still contains — the weekly recap pass will turn this into a structured "last known state" for the reader.
     - **Email, calendar, and meetings — prioritize:** When activity is in mail clients (Outlook, Mail, Thunderbird, …), calendar surfaces, or meeting apps (Microsoft Teams, Zoom, Webex, Google Meet, Skype, …), **bias toward including** a `notable_one_off` even when the block is **shorter than 30 minutes**, if the sub_task shows concrete work: thread or subject line, invite title, attendee-facing text, reply/draft body, or meeting follow-up. Browser windows (Edge/Chrome) count when the sub_task text clearly references mail/calendar/meeting UI (inbox, invite, join link, conference title). Still do not invent ranges: every `range` must be copied verbatim from a sub_task header.
 - `coverage_minutes`: integer. Sum of `approx_minutes` across themes (so the caller can compute the unaccounted-for residual against the table's `total_minutes`).

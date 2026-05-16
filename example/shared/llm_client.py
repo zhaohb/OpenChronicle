@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 _LOCAL_OLLAMA_NO_PROXY = ("localhost", "127.0.0.1", "::1")
 
 DEFAULT_BASE_URL = os.environ.get("OC_LLM_BASE_URL", "http://127.0.0.1:11434")
-DEFAULT_MODEL = os.environ.get("OC_LLM_MODEL", "qwen3_8b_ov:v1")
+DEFAULT_MODEL = os.environ.get("OC_LLM_MODEL", "qwen3_4b_ov:v2")
 DEFAULT_API_KEY = os.environ.get("OC_LLM_API_KEY") or "ollama"
 
 
@@ -92,7 +92,7 @@ class LLMConfig:
     api_key: str = DEFAULT_API_KEY
     temperature: float = 0.2
     max_tokens: int = 4096
-    request_timeout: float = 300.0
+    request_timeout: float = 3600.0
     trust_env: bool = False
 
 

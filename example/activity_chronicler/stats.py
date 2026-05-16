@@ -44,6 +44,44 @@ _SESSION_HEADER_RE = re.compile(
     r"\*\*Session\s+(?P<sid>[^*]+?)\*\*\s*\((?P<start>\d{1,2}:\d{2})\s*[-\u2013]\s*(?P<end>\d{1,2}:\d{2})\)"
 )
 
+_RAW_BREADCRUMB_RE = re.compile(r"\s+—\s+raw:.*$")
+
+
+def _looks_like_inbox_list(text: str) -> bool:
+    """True for mailbox list views, not an opened concrete email thread."""
+    lower = text.lower()
+    return (
+        "inbox list" in lower
+        or "viewed inbox" in lower
+        or "viewed gmail inbox" in lower
+        or lower.startswith("收件箱")
+    )
+
+
+def _sanitize_inbox_list_text(text: str) -> str:
+    """Avoid cross-attributing subjects/senders from mailbox list snapshots.
+
+    Inbox list captures often contain many unrelated visible rows. Small models can
+    incorrectly turn that into one statement like "noted a message from Cursor
+    about X" while also mixing another subject in `Involving`. For recap purposes,
+    a list view should stay a list view; concrete email details belong only to
+    separate opened-email sub_tasks.
+    """
+    if not _looks_like_inbox_list(text):
+        return text
+
+    raw_match = _RAW_BREADCRUMB_RE.search(text)
+    raw_suffix = raw_match.group(0) if raw_match else ""
+    core = text[: raw_match.start()] if raw_match else text
+    first_clause = core.split(";", 1)[0].strip()
+    first_clause = first_clause.split(". Involving:", 1)[0].strip()
+
+    if first_clause.lower().startswith("收件箱"):
+        cleaned = "Inbox list: browsed inbox list. Involving: inbox list."
+    else:
+        cleaned = first_clause.rstrip(".") + ". Involving: inbox list."
+    return cleaned + raw_suffix
+
 
 @dataclass(slots=True)
 class SubTask:
@@ -123,7 +161,7 @@ def _parse_subtask_line(line: str, day: date, entry_id: str) -> SubTask | None:
     if end_dt < start_dt:
         end_dt = end_dt + timedelta(days=1)
     app = m.group("app").strip()
-    rest = m.group("rest").strip()
+    rest = _sanitize_inbox_list_text(m.group("rest").strip())
     return SubTask(
         day=day,
         start=start_dt,
@@ -269,15 +307,41 @@ def format_table(stats: ActivityStats, top_n: int = 10) -> str:
     return "\n".join(lines)
 
 
-def _snippet_from_subtask_text(text: str, max_len: int = 96) -> str:
-    """One-line preview for timeline rows."""
+def _snippet_from_subtask_text(text: str) -> str:
+    """Normalize sub_task text for timeline rows without truncating evidence."""
     s = (text or "").strip()
     if not s:
-        return "（无描述）"
+        return "(no description)"
+    return re.sub(r"\s+", " ", s)
+
+
+def _context_key_from_subtask_text(text: str) -> str:
+    """Best-effort stable context key for deciding whether timeline rows merge.
+
+    Many sub_tasks have the shape ``<context>: <action>; involving ...`` where
+    ``context`` is a file name, page title, email subject, inbox label, or
+    conversation name. Adjacent rows should only merge when that context is the
+    same; sharing the same app alone is too broad and can hide unrelated emails
+    or documents.
+    """
+    s = _RAW_BREADCRUMB_RE.sub("", _snippet_from_subtask_text(text)).strip()
     s = re.sub(r"\s+", " ", s)
-    if len(s) <= max_len:
-        return s
-    return s[: max_len - 1] + "…"
+    if not s:
+        return ""
+
+    # Prefer explicit context before the first colon. This covers pages, files,
+    # email subjects, and many window-title based reducer outputs.
+    prefix = s.split(":", 1)[0].strip() if ":" in s else ""
+    if prefix and 3 <= len(prefix) <= 180:
+        return prefix.lower()
+
+    # Fall back to the first clause. This keeps generic repeated actions
+    # mergeable while still preventing distinct quoted subjects from collapsing.
+    first_clause = re.split(r";|\. Involving:|\binvolving\b", s, maxsplit=1, flags=re.I)[
+        0
+    ].strip()
+    first_clause = re.sub(r"\d+", "#", first_clause)
+    return first_clause[:180].lower()
 
 
 @dataclass(slots=True)
@@ -286,6 +350,7 @@ class _TimelineSeg:
     end: datetime
     display_app: str
     app_key: str
+    context_key: str
     snippets: list[str]
 
 
@@ -301,20 +366,23 @@ def _merge_subtasks_for_timeline(
     cur: _TimelineSeg | None = None
     for st in sub_tasks:
         app_key = st.app.strip().lower()
+        context_key = _context_key_from_subtask_text(st.text)
         if cur is None:
             cur = _TimelineSeg(
                 start=st.start,
                 end=st.end,
                 display_app=st.app.strip(),
                 app_key=app_key,
+                context_key=context_key,
                 snippets=[_snippet_from_subtask_text(st.text)],
             )
             continue
         gap = (st.start - cur.end).total_seconds() / 60.0
         same_day = st.start.date() == cur.start.date()
         same_app = app_key == cur.app_key
+        same_context = context_key == cur.context_key
         # Overlap or tiny negative clock skew — fold in.
-        merge = same_app and same_day and (gap <= merge_gap_minutes or gap < 0)
+        merge = same_app and same_day and same_context and (gap <= merge_gap_minutes or gap < 0)
         if merge:
             if st.end > cur.end:
                 cur.end = st.end
@@ -326,6 +394,7 @@ def _merge_subtasks_for_timeline(
                 end=st.end,
                 display_app=st.app.strip(),
                 app_key=app_key,
+                context_key=context_key,
                 snippets=[_snippet_from_subtask_text(st.text)],
             )
     if cur is not None:
@@ -338,12 +407,12 @@ def build_compact_timeline_lines(
     *,
     max_segments: int = 44,
 ) -> list[str]:
-    """Deterministic, adaptive-gap timeline for Markdown (Chinese labels).
+    """Deterministic, adaptive-gap timeline for Markdown.
 
-    Same-app bursts on the same calendar day are merged when the gap between
-    sub_tasks is below a threshold. The threshold grows (6 → 720 min) until the
-    segment count fits ``max_segments``, so dense weeks compress and quiet days
-    stay granular.
+    Keep the original sub_task granularity when it already fits ``max_segments``.
+    Only dense windows are compacted by progressively merging adjacent same-day /
+    same-app / same-context bursts. This preserves evidence by default while
+    still preventing pathological event files from producing huge recaps.
     """
     sts = [
         st
@@ -356,12 +425,13 @@ def build_compact_timeline_lines(
     # Hard cap — pathological event files should not blow up render time.
     sts = sts[:3000]
 
-    gap_schedule = (6, 12, 20, 35, 55, 90, 150, 240, 360, 720)
-    merged: list[_TimelineSeg] = []
-    for gap in gap_schedule:
-        merged = _merge_subtasks_for_timeline(sts, merge_gap_minutes=float(gap))
-        if len(merged) <= max_segments:
-            break
+    merged = _merge_subtasks_for_timeline(sts, merge_gap_minutes=0.0)
+    if len(merged) > max_segments:
+        gap_schedule = (6, 12, 20, 35, 55, 90, 150, 240, 360, 720)
+        for gap in gap_schedule:
+            merged = _merge_subtasks_for_timeline(sts, merge_gap_minutes=float(gap))
+            if len(merged) <= max_segments:
+                break
 
     lines: list[str] = []
     prev_date: date | None = None
@@ -380,8 +450,8 @@ def build_compact_timeline_lines(
             span = f"{seg.start.strftime('%H:%M')}–{seg.end.strftime('%H:%M')}"
         summary = seg.snippets[0]
         if len(seg.snippets) > 1:
-            summary = f"{summary}（等 {len(seg.snippets)} 条相邻记录已合并）"
+            summary = f"{summary} ({len(seg.snippets)} adjacent records merged)"
         lines.append(
-            f"- **{span}** · `{seg.display_app}` · 约 **{dur}** 分钟 — {summary}"
+            f"- **{span}** · `{seg.display_app}` · about **{dur}** min — {summary}"
         )
     return lines

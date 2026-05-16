@@ -14,8 +14,9 @@ OpenChronicle's session reducer.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -88,12 +89,88 @@ _MAIL_MEETING_TEXT_MARKERS: tuple[str, ...] = (
     "视频会议",
 )
 
+_PLACEHOLDER_ONE_OFF_MARKERS: tuple[str, ...] = (
+    "session sess_",
+    "#session",
+    "(unspecified)",
+)
+
+_LOW_SIGNAL_ACTIVITY_MARKERS: tuple[str, ...] = (
+    "viewed ",
+    "browsed ",
+    "opened ",
+    "clicked ",
+    "navigated ",
+    "interacted with",
+    "file explorer",
+    "explorer section",
+    "file tree",
+    "typed \"\"",
+    "empty string",
+)
+
+_HIGH_SIGNAL_ONE_OFF_MARKERS: tuple[str, ...] = (
+    "deadline",
+    "due",
+    "follow up",
+    "action item",
+    "commitment",
+    "decision",
+    "decided",
+    "blocked",
+    "error",
+    "exception",
+    "failed",
+    "failure",
+    "incident",
+    "bug",
+    "draft",
+    "reply",
+    "send",
+    "confirm",
+    "submit",
+    "review",
+    "todo",
+    "截止",
+    "到期",
+    "待办",
+    "跟进",
+    "确认",
+    "提交",
+    "回复",
+    "草稿",
+    "决定",
+    "承诺",
+    "阻塞",
+    "错误",
+    "异常",
+    "失败",
+)
+
 
 def _app_suffix_from_one_off_range(range_str: str) -> str:
     s = range_str.strip()
     if ", " in s:
         return s.rsplit(", ", 1)[-1].strip().lower()
     return ""
+
+
+def _one_off_duration_minutes(range_str: str) -> int:
+    """Best-effort duration parser for `YYYY-MM-DD HH:MM-HH:MM, App` ranges."""
+    m = re.search(
+        r"(?P<start>\d{1,2}:\d{2})\s*[-\u2013]\s*(?P<end>\d{1,2}:\d{2})",
+        range_str,
+    )
+    if not m:
+        return 0
+    try:
+        start = datetime.strptime(m.group("start"), "%H:%M")
+        end = datetime.strptime(m.group("end"), "%H:%M")
+    except ValueError:
+        return 0
+    if end < start:
+        end += timedelta(days=1)
+    return int(round((end - start).total_seconds() / 60.0))
 
 
 def is_mail_meeting_notable_one_off(o: NotableOneOff) -> bool:
@@ -103,6 +180,35 @@ def is_mail_meeting_notable_one_off(o: NotableOneOff) -> bool:
         return True
     blob = f"{o.range} {o.note}".lower()
     return any(m in blob for m in _MAIL_MEETING_TEXT_MARKERS)
+
+
+def is_low_value_notable_one_off(o: NotableOneOff) -> bool:
+    """Drop one-offs that lack durable value for a recap reader.
+
+    This intentionally uses a general signal model rather than memorizing bad
+    examples. Keep short one-offs only when they carry communication, deadline,
+    decision, incident, unfinished-draft, or other recoverable-work signal.
+    """
+    blob = f"{o.range} {o.note}".lower()
+    if is_mail_meeting_notable_one_off(o):
+        return False
+    if any(marker in blob for marker in _PLACEHOLDER_ONE_OFF_MARKERS):
+        return True
+    app = _app_suffix_from_one_off_range(o.range)
+    if not app or app == "(unspecified)":
+        return True
+    if any(marker in blob for marker in _HIGH_SIGNAL_ONE_OFF_MARKERS):
+        return False
+    duration = _one_off_duration_minutes(o.range)
+    if duration >= 30 and not any(
+        marker in blob for marker in _LOW_SIGNAL_ACTIVITY_MARKERS
+    ):
+        return False
+    if any(marker in blob for marker in _LOW_SIGNAL_ACTIVITY_MARKERS):
+        return True
+    if duration < 10:
+        return True
+    return False
 
 
 def prioritize_mail_meeting_one_offs(one_offs: list[NotableOneOff]) -> list[NotableOneOff]:
@@ -276,7 +382,10 @@ def _coerce_one_offs(raw: Any) -> list[NotableOneOff]:
         note = str(item.get("note", "")).strip()
         if not (rng and note):
             continue
-        out.append(NotableOneOff(range=rng, note=note))
+        one_off = NotableOneOff(range=rng, note=note)
+        if is_low_value_notable_one_off(one_off):
+            continue
+        out.append(one_off)
     return out
 
 

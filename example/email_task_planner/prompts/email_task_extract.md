@@ -10,7 +10,7 @@ The user message gives you:
 2. The default due time to use when the source gives a date but no clock time.
 3. A chronological list of email-like event-daily entries grouped by day.
 
-Each entry carries a `[YYYY-MM-DD HH:MM]` timestamp, a `(session=<sid>)` marker, and one or more reducer lines in the canonical sub_task shape:
+Each entry carries a `[YYYY-MM-DD HH:MM]` timestamp, a `(session=<sid>)` marker, and one or more reducer lines in the canonical sub_task shape.
 
     [HH:MM-HH:MM, <app name>] <action>; <verbatim authored text or quoted evidence, if any>; involving <people/topics/files>
 
@@ -47,6 +47,8 @@ When the source gives a date but no time, set `due_at` to that date plus the cal
 - Never extract calendar invites as tasks unless the email text asks the user to do something beyond attending.
 - If the owner is not visible but the request is directed at the user, use `me`. If neither is visible, use `unknown`.
 - Every task must include at least one `evidence` string copied or tightly quoted from the source.
+- `source_session_ids` must be copied from `(session=...)` markers in the input — never invent ids.
+- Do **not** copy text from this prompt's examples below; only use strings that appear in the user's entries.
 
 ## Authorship guard
 
@@ -76,28 +78,33 @@ Return a JSON object with exactly this shape:
 
 Output only the JSON object, no markdown fences, no commentary, no extra fields.
 
-## Good output
+## Good output (structure only — do not reuse these placeholder strings)
+
+If the input contains a Chrome/Gmail session `sess_abc123` with sub_task
+`[14:02-14:18, Google Chrome] 收件箱 — user typed reply "confirm Friday EOD"; involving Q3 roadmap thread`,
+a valid task might look like:
 
 ```json
 {
   "tasks": [
     {
       "owner": "me",
-      "content": "回复客户确认 5/12 14:00 上门时间。",
-      "due_at": "2026-05-10T09:00:00",
-      "due_text": "请明天前确认",
+      "content": "Reply in Gmail thread Q3 roadmap confirming Friday EOD.",
+      "due_at": "2026-05-16T18:00:00",
+      "due_text": "Friday EOD",
       "confidence": "high",
-      "source_app": "Outlook",
-      "source_subject": "客户现场支持时间确认",
-      "source_session_ids": ["sess_4a2f1c"],
+      "source_app": "Google Chrome",
+      "source_subject": "Q3 roadmap thread",
+      "source_session_ids": ["sess_abc123"],
       "evidence": [
-        "[Outlook] typed reply \"我们 5/12 14:00 在客户现场见\"",
-        "email body includes \"请明天前确认\""
+        "[14:02-14:18, Google Chrome] user typed reply \"confirm Friday EOD\""
       ]
     }
   ]
 }
 ```
+
+Every id, app name, subject, and evidence line must come from **your** input batch, not from this template.
 
 ## Bad output (do not produce)
 

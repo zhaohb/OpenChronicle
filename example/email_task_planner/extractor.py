@@ -107,6 +107,24 @@ class EmailTaskResult:
     unscheduled_tasks: list[EmailTask] = field(default_factory=list)
     entry_count: int = 0
     candidate_entry_count: int = 0
+    dropped_ungrounded_count: int = 0
+
+
+@dataclass(slots=True)
+class _GroundingContext:
+    """Normalized text + session ids from email-like entries sent to the LLM."""
+
+    corpus: str
+    session_ids: set[str]
+
+
+# Strings from an older prompt few-shot; reject if they appear in output but not in corpus.
+_PROMPT_LEAK_MARKERS: tuple[str, ...] = (
+    "sess_4a2f1c",
+    "客户现场支持时间确认",
+    "我们 5/12 14:00 在客户现场见",
+    "email body includes \"请明天前确认\"",
+)
 
 
 def _load_prompt(name: str) -> str:
@@ -218,6 +236,142 @@ def _coerce_task(raw: Any, default_due_time: time) -> EmailTask | None:
     return task
 
 
+def _normalize_corpus(text: str) -> str:
+    return " ".join(text.lower().split())
+
+
+def _build_grounding_context(entries: list[Entry]) -> _GroundingContext:
+    parts: list[str] = []
+    session_ids: set[str] = set()
+    for entry in entries:
+        if entry.session_id:
+            session_ids.add(entry.session_id.strip())
+        parts.append(_entry_text(entry))
+    return _GroundingContext(
+        corpus=_normalize_corpus("\n".join(parts)),
+        session_ids=session_ids,
+    )
+
+
+def _quoted_fragments(text: str) -> list[str]:
+    out: list[str] = []
+    for match in re.finditer(r'"([^"]{4,})"', text):
+        out.append(_normalize_corpus(match.group(1)))
+    for match in re.finditer(r"「([^」]{4,})」", text):
+        out.append(_normalize_corpus(match.group(1)))
+    return out
+
+
+def _evidence_matches_corpus(evidence: str, corpus: str) -> bool:
+    """True when at least one substantive fragment of *evidence* appears in *corpus*."""
+    for fragment in _quoted_fragments(evidence):
+        if len(fragment) >= 4 and fragment in corpus:
+            return True
+    bracket = re.search(r"\[([^\]]{8,})\]", evidence)
+    if bracket:
+        inner = _normalize_corpus(bracket.group(1))
+        if inner in corpus:
+            return True
+    ev_norm = _normalize_corpus(evidence)
+    for chunk in re.findall(r"[\u4e00-\u9fff\w]{8,}", ev_norm):
+        if chunk in corpus:
+            return True
+    return False
+
+
+def _app_in_corpus(app: str, corpus: str) -> bool:
+    a = _normalize_corpus(app)
+    if not a or a == "unknown":
+        return True
+    if a in corpus:
+        return True
+    short = a.removeprefix("microsoft ").strip()
+    if short and short in corpus:
+        return True
+    for part in a.split():
+        if len(part) >= 4 and part in corpus:
+            return True
+    return False
+
+
+def _task_has_prompt_leak(task: EmailTask, corpus: str) -> bool:
+    blob = _normalize_corpus(
+        " ".join(
+            [
+                task.content,
+                task.source_subject,
+                " ".join(task.evidence),
+                " ".join(task.source_session_ids),
+            ]
+        )
+    )
+    for marker in _PROMPT_LEAK_MARKERS:
+        m = _normalize_corpus(marker)
+        if m in blob and m not in corpus:
+            return True
+    return False
+
+
+def filter_grounded_tasks(
+    tasks: list[EmailTask],
+    entries: list[Entry],
+) -> tuple[list[EmailTask], int]:
+    """Drop LLM tasks whose sessions / evidence / subject are not in *entries*."""
+    if not tasks:
+        return [], 0
+    ctx = _build_grounding_context(entries)
+    kept: list[EmailTask] = []
+    dropped = 0
+    for task in tasks:
+        if _task_has_prompt_leak(task, ctx.corpus):
+            logger.warning(
+                "Dropping ungrounded email task (matches prompt example, not in events): %s",
+                task.content[:80],
+            )
+            dropped += 1
+            continue
+        if task.source_session_ids:
+            unknown = [
+                sid
+                for sid in task.source_session_ids
+                if sid not in ctx.session_ids
+            ]
+            if unknown:
+                logger.info(
+                    "Dropping email task: session id(s) not in window: %s",
+                    unknown,
+                )
+                dropped += 1
+                continue
+        if not task.evidence or not any(
+            _evidence_matches_corpus(ev, ctx.corpus) for ev in task.evidence
+        ):
+            logger.info(
+                "Dropping email task: evidence not found in event entries: %s",
+                task.content[:80],
+            )
+            dropped += 1
+            continue
+        if task.source_subject:
+            subj = _normalize_corpus(task.source_subject)
+            if len(subj) >= 4 and subj not in ctx.corpus:
+                logger.info(
+                    "Dropping email task: subject not in event entries: %s",
+                    task.source_subject,
+                )
+                dropped += 1
+                continue
+        if not _app_in_corpus(task.source_app, ctx.corpus):
+            logger.info(
+                "Dropping email task: source_app not in event entries: %s",
+                task.source_app,
+            )
+            dropped += 1
+            continue
+        kept.append(task)
+    return kept, dropped
+
+
 def _dedupe_tasks(tasks: list[EmailTask]) -> list[EmailTask]:
     out: list[EmailTask] = []
     seen: set[tuple[str, str, str]] = set()
@@ -276,6 +430,8 @@ async def extract_email_tasks(
         if (task := _coerce_task(item, default_due_time)) is not None
     ]
     parsed = _dedupe_tasks(parsed)
+    parsed, dropped = filter_grounded_tasks(parsed, candidates)
+    result.dropped_ungrounded_count = dropped
     result.tasks = [task for task in parsed if task.due_at is not None]
     result.unscheduled_tasks = [task for task in parsed if task.due_at is None]
     return result
@@ -330,6 +486,12 @@ def render_markdown(result: EmailTaskResult, calendar_path: Path | None = None) 
     if calendar_path is not None:
         lines.append(f"_日历文件：`{calendar_path}`_")
         lines.append("")
+    if result.dropped_ungrounded_count:
+        lines.append(
+            f"> 已丢弃 **{result.dropped_ungrounded_count}** 条无法在 event-daily 中核对 session / "
+            "证据 / 主题 / 应用名的模型输出（避免 prompt 示例或幻觉写入报告）。"
+        )
+        lines.append("")
 
     if not result.tasks and not result.unscheduled_tasks:
         lines.append("> 没有从已捕获的邮件上下文中识别出可执行待办。")
@@ -380,5 +542,6 @@ __all__ = [
     "EmailTask",
     "EmailTaskResult",
     "extract_email_tasks",
+    "filter_grounded_tasks",
     "render_markdown",
 ]
